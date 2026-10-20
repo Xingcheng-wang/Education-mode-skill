@@ -4,6 +4,7 @@
 - Goal:
 - Time box:
 - Mode: curiosity / systematic / skill-drill / deep-read
+- Retrieval: local / web / ask / auto
 
 ## 用户产出
 

@@ -1,11 +1,14 @@
 {
-  "version": 1,
+  "version": 2,
   "language": "auto",
   "session_minutes": 20,
-  "max_explanation_words": 180,
+  "max_explanation_words": 250,
   "mastery_threshold": 2,
   "hint_policy": "one_level_at_a_time",
-  "allow_network": false,
+  "retrieval_mode": "ask",
+  "web_cache": true,
+  "context_window": 1000000,
+  "multimodal": false,
   "corpus_dir": "corpus",
   "review_algorithm": "sm2"
 }

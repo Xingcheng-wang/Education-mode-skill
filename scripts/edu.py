@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""edu.py — offline learning workspace CLI for the education-mode skill.
+"""edu.py — local-first learning workspace CLI for the education-mode skill.
 
-Standard library only. No network access. Python 3.8+.
+Standard library only. The script itself never makes network requests.
+Python 3.8+.
 
 Commands:
-  doctor      check the offline environment
+  doctor      check the deployment environment and retrieval mode
   init        create a learning workspace
   status      show learner state
-  ingest      index a local txt/md/epub/pdf source
+  config      show or change retrieval mode and model assumptions
+  ingest      index a local or cached web txt/md/epub/pdf source
   search      BM25 keyword search over indexed chunks
+  source      show corpus metadata (including web URL / access date)
+  read        print a full source or a character range (large-context models)
+  outline     print chunk locators and opening lines (structure map)
   add-review  add a spaced-repetition item
   due         list due review items
   review      record a review grade and reschedule (SM-2)
@@ -33,19 +38,24 @@ from datetime import date, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 
 DEFAULT_CONFIG = {
-    "version": 1,
+    "version": 2,
     "language": "auto",
     "session_minutes": 20,
-    "max_explanation_words": 180,
+    "max_explanation_words": 250,
     "mastery_threshold": 2,
     "hint_policy": "one_level_at_a_time",
-    "allow_network": False,
+    "retrieval_mode": "ask",
+    "web_cache": True,
+    "context_window": 1000000,
+    "multimodal": False,
     "corpus_dir": "corpus",
     "review_algorithm": "sm2",
 }
+
+ALLOWED_RETRIEVAL = ("local", "web", "ask", "auto")
 
 PROFILE_TEMPLATE = """# Learner Profile
 
@@ -118,6 +128,10 @@ def print_json(obj) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
 
+def eprint(*args, **kwargs) -> None:
+    print(*args, file=sys.stderr, **kwargs)
+
+
 def read_text(path: Path) -> str:
     data = path.read_bytes()
     for enc in ("utf-8-sig", "utf-8", "gb18030"):
@@ -126,6 +140,35 @@ def read_text(path: Path) -> str:
         except UnicodeDecodeError:
             continue
     return data.decode("utf-8", "replace")
+
+
+def normalize_config(cfg: dict):
+    """Migrate v1 configs and fill missing v2 keys."""
+    cfg = dict(cfg or {})
+    changed = False
+
+    if "retrieval_mode" not in cfg:
+        legacy = cfg.get("allow_network")
+        cfg["retrieval_mode"] = "web" if legacy else "local"
+        changed = True
+    if "allow_network" in cfg:
+        cfg.pop("allow_network", None)
+        changed = True
+
+    for key, value in DEFAULT_CONFIG.items():
+        if key not in cfg:
+            cfg[key] = value
+            changed = True
+
+    if cfg.get("version") != DEFAULT_CONFIG["version"]:
+        cfg["version"] = DEFAULT_CONFIG["version"]
+        changed = True
+
+    if cfg.get("retrieval_mode") not in ALLOWED_RETRIEVAL:
+        cfg["retrieval_mode"] = "ask"
+        changed = True
+
+    return cfg, changed
 
 
 def ensure_home(home: Path, lang: str = "auto") -> Path:
@@ -137,6 +180,10 @@ def ensure_home(home: Path, lang: str = "auto") -> Path:
         cfg = dict(DEFAULT_CONFIG)
         cfg["language"] = lang
         save_json(config_path, cfg)
+    else:
+        cfg, changed = normalize_config(load_json(config_path, DEFAULT_CONFIG))
+        if changed:
+            save_json(config_path, cfg)
 
     profile = home / "learner" / "profile.md"
     if not profile.exists():
@@ -323,7 +370,7 @@ def split_pages(text: str):
     return pages
 
 
-def build_chunks(source_id: str, segments):
+def build_chunks(source_id: str, segments, url: str = ""):
     chunks = []
     counter = 0
     for locator, text in segments:
@@ -338,6 +385,7 @@ def build_chunks(source_id: str, segments):
                 "source": source_id,
                 "locator": loc,
                 "text": body,
+                "url": url,
             })
     return chunks
 
@@ -474,10 +522,15 @@ def cmd_doctor(args) -> int:
 
     config_path = home / "config.json"
     if config_path.exists():
-        cfg = load_json(config_path, DEFAULT_CONFIG)
-        print("allow_network: %s" % cfg.get("allow_network"))
-        if cfg.get("allow_network"):
-            print("WARNING     : allow_network is true; education-mode must stay offline")
+        cfg, _ = normalize_config(load_json(config_path, DEFAULT_CONFIG))
+        print("retrieval   : %s" % cfg.get("retrieval_mode"))
+        print("web_cache   : %s" % cfg.get("web_cache"))
+        print("context     : %s tokens" % cfg.get("context_window"))
+        print("multimodal  : %s" % cfg.get("multimodal"))
+        if cfg.get("retrieval_mode") == "local":
+            print("network     : disabled by retrieval_mode=local")
+        if cfg.get("multimodal"):
+            print("WARNING     : multimodal is true, but this skill is designed for non-multimodal models")
     else:
         print("config      : missing (run init)")
 
@@ -498,6 +551,7 @@ def cmd_init(args) -> int:
 
 def cmd_status(args) -> int:
     home = ensure_home(workspace(args))
+    config, _ = normalize_config(load_json(home / "config.json", DEFAULT_CONFIG))
     topics = load_items(home, "topics.json")["items"]
     misconceptions = load_items(home, "misconceptions.json")["items"]
     schedule = load_items(home, "schedule.json")["items"]
@@ -511,6 +565,7 @@ def cmd_status(args) -> int:
     if args.json:
         print_json({
             "home": str(home),
+            "config": config,
             "topics": topics,
             "due": due,
             "open_misconceptions": open_mis,
@@ -520,6 +575,9 @@ def cmd_status(args) -> int:
         return 0
 
     print("workspace: %s" % home)
+    print("retrieval: %s  (context %s, multimodal %s)" % (
+        config.get("retrieval_mode"), config.get("context_window"), config.get("multimodal"),
+    ))
     print("topics   : %d  (mastered %d, learning %d)" % (
         len(topics),
         sum(1 for t in topics if t.get("status") == "mastered"),
@@ -552,9 +610,125 @@ def cmd_status(args) -> int:
     return 0
 
 
+CONFIG_BOOL_KEYS = {"web_cache", "multimodal"}
+CONFIG_INT_KEYS = {"session_minutes", "max_explanation_words", "mastery_threshold", "context_window"}
+
+
+def cmd_config(args) -> int:
+    home = ensure_home(workspace(args))
+    config, _ = normalize_config(load_json(home / "config.json", DEFAULT_CONFIG))
+
+    if not args.set_values:
+        print_json(config)
+        return 0
+
+    for pair in args.set_values:
+        if "=" not in pair:
+            raise SystemExit("Expected KEY=VALUE, got %r" % pair)
+        key, raw = pair.split("=", 1)
+        key = key.strip()
+        raw = raw.strip()
+        if key == "retrieval_mode":
+            if raw not in ALLOWED_RETRIEVAL:
+                raise SystemExit("retrieval_mode must be one of %s" % (ALLOWED_RETRIEVAL,))
+            config[key] = raw
+        elif key in CONFIG_BOOL_KEYS:
+            config[key] = raw.lower() in ("1", "true", "yes", "on")
+        elif key in CONFIG_INT_KEYS:
+            try:
+                config[key] = int(raw)
+            except ValueError:
+                raise SystemExit("%s must be an integer" % key)
+        elif key in ("language", "hint_policy", "review_algorithm"):
+            config[key] = raw
+        else:
+            raise SystemExit("Unknown config key: %s" % key)
+
+    if config["context_window"] < 8000:
+        raise SystemExit("context_window must be >= 8000")
+    if config["max_explanation_words"] < 50:
+        raise SystemExit("max_explanation_words must be >= 50")
+    if config["mastery_threshold"] not in (0, 1, 2, 3):
+        raise SystemExit("mastery_threshold must be 0-3")
+    if config["session_minutes"] < 5:
+        raise SystemExit("session_minutes must be >= 5")
+    if config["language"] not in ("auto", "zh", "en"):
+        raise SystemExit("language must be auto, zh or en")
+    if config["hint_policy"] != "one_level_at_a_time":
+        raise SystemExit("hint_policy is currently fixed to one_level_at_a_time")
+    if config["review_algorithm"] != "sm2":
+        raise SystemExit("review_algorithm is currently fixed to sm2")
+
+    save_json(home / "config.json", config)
+    print_json(config)
+    return 0
+
+
+def cmd_source(args) -> int:
+    home = ensure_home(workspace(args))
+    if args.id:
+        path = home / "corpus" / args.id / "meta.json"
+        if not path.exists():
+            raise SystemExit("Source not found: %s" % args.id)
+        print_json(load_json(path, {}))
+        return 0
+
+    rows = []
+    for path in sorted((home / "corpus").glob("*/meta.json")):
+        rows.append(load_json(path, {}))
+    if args.json:
+        print_json(rows)
+        return 0
+    if not rows:
+        print("No sources indexed.")
+        return 0
+    for meta in rows:
+        print("%-20s %-6s %-6s %s" % (
+            meta.get("id", "?"),
+            meta.get("source_kind", "local"),
+            meta.get("chunks", 0),
+            meta.get("title", ""),
+        ))
+        if meta.get("url"):
+            print("  url: %s (accessed %s)" % (meta["url"], meta.get("retrieved_at") or "-"))
+    return 0
+
+
+def cmd_read(args) -> int:
+    home = ensure_home(workspace(args))
+    path = home / "corpus" / args.source / "text.txt"
+    if not path.exists():
+        raise SystemExit("Source not found: %s" % args.source)
+    text = read_text(path)
+    total = len(text)
+    start = max(0, args.offset)
+    if start >= total:
+        raise SystemExit("Offset %d is beyond the end (%d chars)" % (start, total))
+    limit = args.max_chars if args.max_chars and args.max_chars > 0 else total
+    end = min(total, start + limit)
+    print(text[start:end])
+    if end < total:
+        eprint("[truncated] showed %d-%d of %d chars; next --offset %d" % (
+            start, end, total, end,
+        ))
+    return 0
+
+
+def cmd_outline(args) -> int:
+    home = ensure_home(workspace(args))
+    chunks = _load_chunks(home, args.source)
+    if not chunks:
+        raise SystemExit("Source not indexed: %s" % args.source)
+    for chunk in chunks:
+        first_line = " ".join(chunk.get("text", "").split())
+        print("%-16s %s" % (chunk.get("locator", "?"), first_line[:120]))
+    print("chunks: %d" % len(chunks))
+    return 0
+
+
 def cmd_ingest(args) -> int:
     home = ensure_home(workspace(args))
-    source = Path(args.file).expanduser()
+    source = Path(args.file).expanduser().resolve()
     if not source.exists():
         raise SystemExit("File not found: %s" % source)
 
@@ -579,7 +753,15 @@ def cmd_ingest(args) -> int:
     if not text.strip():
         raise SystemExit("No text extracted from %s" % source)
 
-    chunks = build_chunks(source_id, segments)
+    url = (args.url or "").strip()
+    retrieved_at = (args.retrieved_at or "").strip()
+    if url and not retrieved_at:
+        retrieved_at = today_str()
+    if retrieved_at:
+        parse_date(retrieved_at)
+    title = (args.title or source.stem).strip()
+
+    chunks = build_chunks(source_id, segments, url=url)
     dest = home / "corpus" / source_id
     dest.mkdir(parents=True, exist_ok=True)
 
@@ -589,16 +771,23 @@ def cmd_ingest(args) -> int:
     (dest / "text.txt").write_text(text, encoding="utf-8", newline="\n")
     save_json(dest / "meta.json", {
         "id": source_id,
-        "title": source.stem,
+        "title": title,
         "source_path": str(source),
         "format": fmt,
+        "source_kind": "web" if url else "local",
+        "url": url,
+        "retrieved_at": retrieved_at,
         "created": today_str(),
         "chars": len(text),
         "chunks": len(chunks),
     })
 
-    print("indexed %s: %d chars, %d chunks" % (source_id, len(text), len(chunks)))
+    print("indexed %s: %d chars, %d chunks, kind=%s" % (
+        source_id, len(text), len(chunks), "web" if url else "local",
+    ))
     print("path: %s" % dest)
+    if url:
+        print("cite: [W:%s %s accessed %s]" % (source_id, url, retrieved_at))
     print("search: python edu.py search --home %s --query \"...\" --source %s" % (home, source_id))
     return 0
 
@@ -630,7 +819,7 @@ def cmd_search(args) -> int:
     chunks = _load_chunks(home, args.source)
     if not chunks:
         print("No indexed chunks. Run ingest first.")
-        return 1
+        return 0
 
     query_tokens = tokenize(args.query)
     docs = [tokenize(chunk.get("text", "")) for chunk in chunks]
@@ -647,6 +836,7 @@ def cmd_search(args) -> int:
                 "id": chunk.get("id"),
                 "source": chunk.get("source"),
                 "locator": chunk.get("locator"),
+                "url": chunk.get("url", ""),
                 "score": round(score, 4),
                 "text": chunk.get("text", ""),
             }
@@ -662,6 +852,8 @@ def cmd_search(args) -> int:
         print("[%d] %s %s  score=%.3f" % (
             index, chunk.get("source"), chunk.get("locator"), score,
         ))
+        if chunk.get("url"):
+            print("    url: %s" % chunk.get("url"))
         print("    %s" % snippet(chunk.get("text", ""), args.query))
         print("    chunk=%s" % chunk.get("id"))
     return 0
@@ -824,6 +1016,7 @@ def cmd_checkpoint(args) -> int:
         "- Goal: %s" % (args.goal or "-"),
         "- Time box: %s" % (args.time or "-"),
         "- Mode: %s" % args.mode,
+        "- Retrieval: %s" % (args.retrieval or "-"),
         "",
         "## 用户产出",
         "",
@@ -867,9 +1060,13 @@ def cmd_validate(args) -> int:
     errors = []
     warnings = []
 
-    config = load_json(home / "config.json", DEFAULT_CONFIG)
-    if config.get("allow_network"):
-        warnings.append("config.allow_network is true; the skill must stay offline")
+    config, _ = normalize_config(load_json(home / "config.json", DEFAULT_CONFIG))
+    if config.get("retrieval_mode") not in ALLOWED_RETRIEVAL:
+        errors.append("invalid retrieval_mode: %r" % config.get("retrieval_mode"))
+    if not isinstance(config.get("context_window"), int) or config.get("context_window", 0) < 8000:
+        errors.append("context_window must be an integer >= 8000")
+    if config.get("multimodal"):
+        warnings.append("multimodal is true, but this skill is designed for non-multimodal models")
 
     seen_topics = set()
     for topic in load_items(home, "topics.json")["items"]:
@@ -912,6 +1109,15 @@ def cmd_validate(args) -> int:
                 errors.append("duplicate session number: %04d" % number)
             seen_sessions.add(number)
 
+    for path in sorted((home / "corpus").glob("*/meta.json")):
+        meta = load_json(path, {})
+        if not meta.get("id"):
+            errors.append("corpus meta missing id: %s" % path)
+        if meta.get("source_kind") == "web" and not meta.get("url"):
+            errors.append("web source missing url: %s" % path)
+        if meta.get("url") and not meta.get("retrieved_at"):
+            errors.append("web source missing retrieved_at: %s" % path)
+
     for path in sorted((home / "corpus").glob("*/chunks.jsonl")):
         with path.open("r", encoding="utf-8") as fh:
             for line_no, line in enumerate(fh, 1):
@@ -933,8 +1139,8 @@ def cmd_validate(args) -> int:
     if errors:
         print("validation failed: %d error(s)" % len(errors))
         return 1
-    print("validation ok: %d topic(s), %d review(s), %d session(s)" % (
-        len(seen_topics), len(seen_reviews), len(seen_sessions),
+    print("validation ok: retrieval=%s, %d topic(s), %d review(s), %d session(s)" % (
+        config.get("retrieval_mode"), len(seen_topics), len(seen_reviews), len(seen_sessions),
     ))
     return 0
 
@@ -945,7 +1151,7 @@ def cmd_validate(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="edu.py",
-        description="Offline learning workspace CLI for education-mode.",
+        description="Local-first learning workspace CLI for education-mode.",
     )
     parser.add_argument("--version", action="version", version=VERSION)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -954,7 +1160,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--home", default=os.environ.get("EDU_HOME", str(Path.home() / ".edu")),
                         help="learning workspace (default: $EDU_HOME or ~/.edu)")
 
-    p = sub.add_parser("doctor", help="check offline environment")
+    p = sub.add_parser("doctor", help="check deployment environment")
     add_home(p)
     p.set_defaults(func=cmd_doctor)
 
@@ -968,11 +1174,39 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_status)
 
-    p = sub.add_parser("ingest", help="index a local source")
+    p = sub.add_parser("config", help="show or change configuration")
+    add_home(p)
+    p.add_argument("--set", dest="set_values", action="append", default=[],
+                   metavar="KEY=VALUE", help="e.g. --set retrieval_mode=local")
+    p.set_defaults(func=cmd_config)
+
+    p = sub.add_parser("ingest", help="index a local or cached web source")
     add_home(p)
     p.add_argument("--file", required=True)
     p.add_argument("--id", default=None, help="source id (default: file stem)")
+    p.add_argument("--title", default=None, help="human-readable title")
+    p.add_argument("--url", default=None, help="source URL for web-derived material")
+    p.add_argument("--retrieved-at", default=None, help="YYYY-MM-DD (default: today for web)")
     p.set_defaults(func=cmd_ingest)
+
+    p = sub.add_parser("source", help="show corpus metadata")
+    add_home(p)
+    p.add_argument("--id", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_source)
+
+    p = sub.add_parser("read", help="print a full source or character range")
+    add_home(p)
+    p.add_argument("--source", required=True)
+    p.add_argument("--offset", type=int, default=0)
+    p.add_argument("--max-chars", type=int, default=400000,
+                   help="0 means no limit (default: 400000)")
+    p.set_defaults(func=cmd_read)
+
+    p = sub.add_parser("outline", help="print chunk locators and opening lines")
+    add_home(p)
+    p.add_argument("--source", required=True)
+    p.set_defaults(func=cmd_outline)
 
     p = sub.add_parser("search", help="BM25 search over indexed chunks")
     add_home(p)
@@ -1009,6 +1243,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--topic-title", default=None)
     p.add_argument("--mode", required=True,
                    choices=("curiosity", "systematic", "skill-drill", "deep-read"))
+    p.add_argument("--retrieval", default=None, choices=ALLOWED_RETRIEVAL)
     p.add_argument("--goal", default=None)
     p.add_argument("--time", default=None)
     p.add_argument("--summary", default=None, help="what the learner produced")

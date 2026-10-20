@@ -26,7 +26,7 @@
 
 | 文件 | 谁写 | 规则 |
 |---|---|---|
-| `config.json` | 用户/初始化 | 模型只读 |
+| `config.json` | 用户/初始化；模型通过 `edu.py config` 修改 | 模型不直接手改 |
 | `learner/profile.md` | 模型 | 可编辑；保留用户原话 |
 | `learner/topics.json` | `edu.py` | 模型不手改 |
 | `learner/misconceptions.json` | `edu.py` | 模型不手改 |
@@ -41,19 +41,50 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "language": "auto",
   "session_minutes": 20,
-  "max_explanation_words": 180,
+  "max_explanation_words": 250,
   "mastery_threshold": 2,
   "hint_policy": "one_level_at_a_time",
-  "allow_network": false,
+  "retrieval_mode": "ask",
+  "web_cache": true,
+  "context_window": 1000000,
+  "multimodal": false,
   "corpus_dir": "corpus",
   "review_algorithm": "sm2"
 }
 ```
 
-`allow_network` 必须为 `false`；`validate` 会对此告警。
+| 字段 | 说明 |
+|---|---|
+| `retrieval_mode` | `local` / `web` / `ask` / `auto`。`local` 严格禁止联网检索 |
+| `web_cache` | 网页资料是否必须缓存后再引用；默认 `true` |
+| `context_window` | 目标模型上下文，默认 1000000；仅用于策略提示 |
+| `multimodal` | 是否支持图像；默认 `false`，不得假装看图 |
+
+旧版 `allow_network` 会被自动迁移：`false → local`，`true → web`。迁移后不再使用该字段。
+
+## corpus/meta.json
+
+```json
+{
+  "id": "paper-x",
+  "title": "Paper Title",
+  "source_path": "C:/Users/root/.edu/corpus/inbox/paper-x.pdf",
+  "format": "pdf",
+  "source_kind": "local",
+  "url": "",
+  "retrieved_at": "",
+  "created": "2026-10-20",
+  "chars": 48210,
+  "chunks": 63
+}
+```
+
+- `source_kind`: `local` | `web`
+- 网页来源必须有 `url` 与 `retrieved_at`
+- `chunks.jsonl` 每行包含 `id`、`source`、`locator`、`text`、`url`（本地来源为空字符串）
 
 ## topics.json
 

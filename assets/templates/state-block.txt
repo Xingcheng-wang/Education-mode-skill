@@ -1,7 +1,7 @@
 [EDU STATE]
 learner: <称呼>
 language: zh | en | auto
-topic: <topic-id> | mastery: 0-3 | mode: curiosity|systematic|skill-drill|deep-read
+topic: <topic-id> | mastery: 0-3 | mode: curiosity|systematic|skill-drill|deep-read | retrieval: local|web|ask
 goal: <本次目标>
 produced: <用户本次产出了什么>
 misconception: <用户以为... / 实际... / 证据...>
