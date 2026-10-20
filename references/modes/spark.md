@@ -76,7 +76,7 @@ edu.py spark --home <EDU_HOME> --action prior-art --id s0001 \
 
 - `park`：记下来，暂时不做。Park 是成功。
 - `read`：精读 2–3 个最相关的工作。
-- `test`：做一个最小验证/原型。
+- `test`：发起一个最小验证的**邀请**（不是任务）：一个可见结果、一个选择、一个便宜的现实检验。
 - `project`：验证通过，转成项目型滚动计划。
 
 ### 2.5 Record
@@ -140,3 +140,5 @@ edu.py spark --home <EDU_HOME> --action route --id s0001 --to deep-read
 - 所有外部资料标注 `[S:]` / `[W:]` / `[M]` / `[?]`。
 - 术语首现解释；不做缩写汤。
 - 语气轻松、具体；不拿用户开玩笑；用户沮丧时关掉幽默。
+- 不把 smallest test 写成“任务：做 X、写 Y”；它是邀请，用户可以改、可以拒绝。
+- 不预设答案形式；不把 triage 变成填空。

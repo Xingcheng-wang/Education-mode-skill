@@ -47,7 +47,7 @@ from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 MIN_PYTHON = (3, 12)
 
 DEFAULT_PLAN = {
@@ -224,7 +224,7 @@ def normalize_config(cfg: dict):
 
 
 def ensure_home(home: Path, lang: str = "auto") -> Path:
-    for rel in ("learner", "sessions", "notes", "sparks", "corpus/inbox"):
+    for rel in ("learner", "learner/outlines", "sessions", "notes", "sparks", "corpus/inbox"):
         (home / rel).mkdir(parents=True, exist_ok=True)
 
     config_path = home / "config.json"
@@ -1789,6 +1789,9 @@ def cmd_forget(args) -> int:
         ]
         actions.append("remove topic %s" % args.topic)
         actions.append("remove related reviews and misconceptions")
+        outline_name = "%s.md" % args.topic.replace("/", "-")
+        if (home / "learner" / "outlines" / outline_name).exists():
+            actions.append("delete theory outline %s" % outline_name)
         actions.extend("delete session %s" % path.name for path in related_sessions)
 
     if args.spark:
@@ -1798,7 +1801,7 @@ def cmd_forget(args) -> int:
         actions.append("remove spark %s" % args.spark)
 
     if args.all:
-        actions.append("remove all learner profile, glossary, topics, misconceptions, and reviews")
+        actions.append("remove all learner profile, glossary, theory outlines, topics, misconceptions, and reviews")
         actions.append("remove all sparks")
         actions.append("reset direction and plan")
         if (home / "plan.md").exists():
@@ -1835,6 +1838,9 @@ def cmd_forget(args) -> int:
         for path in sessions:
             if _session_meta(path)["topic"] == args.topic:
                 path.unlink()
+        outline = home / "learner" / "outlines" / ("%s.md" % args.topic.replace("/", "-"))
+        if outline.exists():
+            outline.unlink()
         _write_plan(home)
     elif args.spark:
         data = load_sparks(home)
@@ -1855,6 +1861,8 @@ def cmd_forget(args) -> int:
             path = home / "learner" / name
             if path.exists():
                 path.unlink()
+        for path in sorted((home / "learner" / "outlines").rglob("*.md")):
+            path.unlink()
         plan_md = home / "plan.md"
         if plan_md.exists():
             plan_md.unlink()

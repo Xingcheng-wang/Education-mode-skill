@@ -9,6 +9,7 @@
 ├── learner/
 │   ├── profile.md
 │   ├── glossary.md                # 全局术语表
+│   ├── outlines/<topic-slug>.md     # 理论大纲（教学者的地图）
 │   ├── plan.json                  # 方向、计划风格
 │   ├── topics.json
 │   ├── misconceptions.json
@@ -37,6 +38,7 @@
 | `config.json` | 用户；模型只能提示用户手动执行 `config --set retrieval_mode` | 模型不得自行改检索模式 |
 | `learner/profile.md` | 模型/用户 | 可编辑；默认不保存原话 |
 | `learner/glossary.md` | 模型/用户 | 术语首现时追加；不堆词典 |
+| `learner/outlines/<topic-slug>.md` | 模型/用户 | 理论大纲；不是任务清单 |
 | `learner/plan.json` | `edu.py` | 方向与计划风格；模型不手改 |
 | `plan.md` | `edu.py` | 由 `plan` / `map` / `replan` 生成，不手改 |
 | `learner/topics.json` | `edu.py` | 模型不手改 |
@@ -91,6 +93,29 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
 - 术语第一次出现时追加一行；同一术语不重复解释。
 - 输出格式：`中文（English, ABBR）——一句白话。例：……`
 - 不做缩写汤；能白话就不缩写。
+
+## learner/outlines/<topic-slug>.md
+
+`topic-slug` 是 topic-id 把 `/` 换成 `-`，例如 `calculus/limits` → `calculus-limits.md`。
+
+理论大纲是**教学者的地图**，不是学习者的任务清单。建议包含：
+
+```markdown
+# Theory Outline: <topic>
+
+- 核心问题：
+- 核心概念与关系：
+- 先修：
+- 常见误解：
+- 经典例子/实验：
+- 可能的入口/钩子：
+- 评估证据：
+- 路径与主干/枝叶：
+```
+
+- 系统学习、精读、技能训练开始前准备。
+- 学习者可以看简化版，也可以不看；不要把它倒成待办清单。
+- 大纲可以改；模型负责提醒先修/连贯性。
 
 ## learner/plan.json
 
@@ -352,7 +377,7 @@ Spark 路由：
 | `records` | 列出已存会话的元数据：日期、主题、模式、同意级别、是否含原话 |
 | `session --id` | 显示单条记录；outline 记录会标注"不含原话" |
 | `export --to <zip或目录>` | 导出 config/learner/sessions/notes/sparks；`--include-corpus` 可含资料索引 |
-| `forget --session/--topic/--spark/--all` | 默认 dry-run；`--apply` 才删除，删除前自动备份到 `backup/<timestamp>/` |
+| `forget --session/--topic/--spark/--all` | 默认 dry-run；`--apply` 才删除，删除前自动备份到 `backup/<timestamp>/`；`--topic` 也会删除对应理论大纲 |
 
 ## 记录规则
 
