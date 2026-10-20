@@ -1,7 +1,7 @@
 ---
 name: education-mode
 description: 以知识深度/广度、求知欲、实践能力为目标的对话式教育模式；支持本地/联网检索；按标准大模型（1M 上下文、非多模态）设计；不以分数、打卡、排名衡量学习。
-version: 0.5.0
+version: 0.6.0
 license: MIT
 ---
 
@@ -13,7 +13,7 @@ license: MIT
 2. **求知欲**：好奇心、探索的兴趣、终身学习的意愿。
 3. **实践能力**：把知识用到真实任务、做出东西、解决问题。
 
-四种模式（好奇心、系统学习、技能训练、精读）只是手段，不是目标。
+四种学习模式（好奇心、系统学习、技能训练、精读）是手段，不是目标；**Spark 是第五个入口，负责给突然出现的想法做 triage**，不是内容学习模式。
 完整标尺见 `references/learning-goals.md`。每轮结束前用它自检。
 
 ## 硬规则
@@ -87,9 +87,12 @@ license: MIT
 | 系统学/从零学/给个计划/课程 | `systematic` | `references/modes/systematic.md` |
 | 练习/提升技能/训练我/给反馈 | `skill-drill` | `references/modes/skill-drill.md` |
 | 读论文/精读/这本书/这一章 | `deep-read` | `references/modes/deep-read.md` |
+| 我有个想法/为什么不做 X/这是不是有人做过/突然想到 | `spark` | `references/modes/spark.md` |
 
-意图不明只问一句："你想快速弄懂，还是想系统学/练熟？"
+意图不明只问一句："你想快速弄懂，还是想系统学/练熟，还是判断一个想法值不值得做？"
 可以同时加载多个相关参考文件；不要无差别塞入全部。
+
+**Spark 与好奇心的边界**：好奇心回答“世界是什么样”；Spark 回答“这个想法值不值得继续、下一步是什么”。如果用户只是想知道一个概念，用好奇心；如果用户有一个可被验证/被反驳的主张，或问“有没有人做过”，用 Spark。Spark 可以调用好奇心作为子程序。
 
 ## 通用循环
 
@@ -169,6 +172,9 @@ license: MIT
 │   └── schedule.json
 ├── sessions/NNNN-YYYY-MM-DD-topic.md
 ├── notes/<source-id>.md
+├── sparks/
+│   ├── index.json                 # 想法索引与状态
+│   └── s0001.md                   # 单个 spark note
 ├── backup/<timestamp>/            # forget 前的自动备份
 └── corpus/{inbox/, <source-id>/}
 ```
@@ -181,6 +187,9 @@ python <SKILL_DIR>/scripts/edu.py plan --home <EDU_HOME>
 python <SKILL_DIR>/scripts/edu.py map --home <EDU_HOME> --action add --id calculus/limits --title "极限" --why "想理解连续" --horizon now --next-action "用数列例子说清极限"
 python <SKILL_DIR>/scripts/edu.py replan --home <EDU_HOME> --direction "理解微积分如何描述变化"
 python <SKILL_DIR>/scripts/edu.py calibrate --home <EDU_HOME> --topic-id calculus/limits
+python <SKILL_DIR>/scripts/edu.py spark --home <EDU_HOME> --action add --title "统一 LLM 记忆格式" --claim "用一套格式/协议统一记忆" --type design --riskiest-assumption "厂商没有采用动机" --smallest-test "两个系统导出导入再导出"
+python <SKILL_DIR>/scripts/edu.py spark --home <EDU_HOME> --action prior-art --id s0001 --source "W3C AI Agent Memory Interop CG" --relation adjacent
+python <SKILL_DIR>/scripts/edu.py spark --home <EDU_HOME> --action route --id s0001 --to deep-read
 python <SKILL_DIR>/scripts/edu.py config --home <EDU_HOME>          # 仅用户可改 retrieval_mode
 python <SKILL_DIR>/scripts/edu.py search --home <EDU_HOME> --query "..." --top 5
 python <SKILL_DIR>/scripts/edu.py read --home <EDU_HOME> --source <id> --max-chars 400000
@@ -269,13 +278,16 @@ python <SKILL_DIR>/scripts/edu.py forget --home <EDU_HOME> --topic <id> --apply
 - 用一次回答给用户的知识状态下定论
 - 用 20 题审讯代替 2–3 个高质量探针
 - 把 `confidence` / `range` 当成新的分数展示
+- 把 Spark 直接当成承诺或项目；park 是合法结果
+- 没做先行工作检索就断言“没人做过/这是原创”
+- 制造 idea backlog 债务（提醒、排名、未处理数量）
 
 ## 参考索引（按需加载）
 
 - `references/learning-goals.md` — **总标尺：三个目标与反异化清单**
 - `references/deployment.md` — 模型假设、检索模式、能力边界
 - `references/retrieval.md` — 本地/网页检索协议、缓存、引用
-- `references/modes/*.md` — 四种模式
+- `references/modes/*.md` — 四种学习模式 + Spark triage
 - `references/pedagogy/assessment.md` — 反馈与理解状态（不评分）
 - `references/pedagogy/memory.md` — 间隔、检索、交错（以兴趣和理解为准）
 - `references/state-schema.md` — 状态字段与写入规则

@@ -14,6 +14,7 @@ Commands:
   map         add, update, or drop plan nodes
   replan      review and revise the direction and horizon
   calibrate   show a short adaptive-diagnosis protocol for a topic
+  spark       capture and triage an idea (add/list/show/update/prior-art/route)
   ingest      index a local or cached web txt/md/epub/pdf source
   search      BM25 keyword search over indexed chunks
   source      show corpus metadata (including web URL / access date)
@@ -46,7 +47,7 @@ from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 MIN_PYTHON = (3, 12)
 
 DEFAULT_PLAN = {
@@ -75,6 +76,10 @@ HORIZONS = ("now", "next", "later")
 CONFIDENCE_LEVELS = ("low", "medium", "high")
 PROBE_TYPES = ("explain", "predict", "discriminate", "transfer", "find-error")
 PROBE_RESULTS = ("correct", "partial", "incorrect", "unclear")
+SPARK_TYPES = ("question", "hypothesis", "design", "project")
+SPARK_STATUS = ("seed", "exploring", "parked", "project")
+SPARK_MOVES = ("park", "read", "test", "project", "curiosity", "systematic", "skill-drill", "deep-read")
+SPARK_RELATIONS = ("solved", "adjacent", "open", "different")
 
 UNDERSTANDING_LABELS = {
     0: "刚接触",
@@ -210,7 +215,7 @@ def normalize_config(cfg: dict):
 
 
 def ensure_home(home: Path, lang: str = "auto") -> Path:
-    for rel in ("learner", "sessions", "notes", "corpus/inbox"):
+    for rel in ("learner", "sessions", "notes", "sparks", "corpus/inbox"):
         (home / rel).mkdir(parents=True, exist_ok=True)
 
     config_path = home / "config.json"
@@ -237,6 +242,10 @@ def ensure_home(home: Path, lang: str = "auto") -> Path:
         plan = dict(DEFAULT_PLAN)
         plan["updated"] = today_str()
         save_json(plan_path, plan)
+
+    spark_index = home / "sparks" / "index.json"
+    if not spark_index.exists():
+        save_json(spark_index, {"version": 1, "items": []})
 
     return home
 
@@ -657,6 +666,8 @@ def cmd_doctor(args) -> int:
         if path.exists():
             data = load_json(path, {"items": []})
             print("%-12s: %d items" % (name, len(data.get("items", []))))
+    sparks = load_sparks(home)
+    print("%-12s: %d items" % ("sparks", len(sparks.get("items", []))))
     return 0
 
 
@@ -673,6 +684,7 @@ def cmd_status(args) -> int:
     topics = load_items(home, "topics.json")["items"]
     misconceptions = load_items(home, "misconceptions.json")["items"]
     plan = load_plan(home)
+    sparks = load_sparks(home)["items"]
     open_mis = [item for item in misconceptions if item.get("status") == "open"]
     sessions = sorted((home / "sessions").glob("*.md"))
     corpus = [p for p in (home / "corpus").iterdir() if p.is_dir() and p.name != "inbox"]
@@ -683,6 +695,7 @@ def cmd_status(args) -> int:
             "config": config,
             "plan": plan,
             "topics": topics,
+            "sparks": sparks,
             "open_misconceptions": open_mis,
             "recent_sessions": [p.name for p in sessions[-5:]],
             "corpus_sources": [p.name for p in corpus],
@@ -700,6 +713,13 @@ def cmd_status(args) -> int:
         sum(1 for t in topics if t.get("status") == "learning"),
     ))
     print("reviews  : available on request (try `reviews`)")
+    print("sparks   : %d captured (%d seed, %d exploring, %d parked, %d project)" % (
+        len(sparks),
+        sum(1 for item in sparks if item.get("status") == "seed"),
+        sum(1 for item in sparks if item.get("status") == "exploring"),
+        sum(1 for item in sparks if item.get("status") == "parked"),
+        sum(1 for item in sparks if item.get("status") == "project"),
+    ))
     print("open misconceptions: %d" % len(open_mis))
     print("corpus   : %d sources" % len(corpus))
     if topics:
@@ -1422,6 +1442,211 @@ def cmd_calibrate(args) -> int:
     return 0
 
 
+def load_sparks(home: Path) -> dict:
+    return load_json(home / "sparks" / "index.json", {"version": 1, "items": []})
+
+
+def save_sparks(home: Path, data: dict) -> None:
+    save_json(home / "sparks" / "index.json", data)
+
+
+def _next_spark_id(items) -> str:
+    highest = 0
+    for item in items:
+        match = re.fullmatch(r"s(\d+)", item.get("id", ""))
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return "s%04d" % (highest + 1)
+
+
+def _spark_markdown(item: dict) -> str:
+    lines = [
+        "# Spark %s — %s" % (item.get("id"), item.get("title") or ""),
+        "",
+        "- 状态：%s" % item.get("status", "seed"),
+        "- 类型：%s" % item.get("type", "design"),
+        "- 下一步：%s" % (item.get("next_move") or "-"),
+        "- 创建：%s" % (item.get("created") or "-"),
+        "- 更新：%s" % (item.get("updated") or "-"),
+        "",
+        "- 主张：%s" % (item.get("claim") or "-"),
+        "- 为什么现在：%s" % (item.get("why_now") or "-"),
+        "- 为什么是我：%s" % (item.get("why_me") or "-"),
+        "- 最危险的假设：%s" % (item.get("riskiest_assumption") or "-"),
+        "- 最小验证：%s" % (item.get("smallest_test") or "-"),
+        "",
+        "## 先行工作",
+        "",
+    ]
+    prior_art = item.get("prior_art") or []
+    if prior_art:
+        for entry in prior_art:
+            lines.append("- [%s] %s — %s" % (
+                entry.get("relation", "?"),
+                entry.get("source", "?"),
+                entry.get("note", "") or "",
+            ))
+    else:
+        lines.append("- （还没有检索）")
+    lines.extend([
+        "",
+        "> Park 是成功，不是失败。没有提醒，也没有 backlog 债务。",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+def _write_spark(home: Path, item: dict) -> Path:
+    path = home / "sparks" / ("%s.md" % item["id"])
+    path.write_text(_spark_markdown(item), encoding="utf-8", newline="\n")
+    return path
+
+
+def _find_spark(items, spark_id: str):
+    return next((item for item in items if item.get("id") == spark_id), None)
+
+
+def cmd_spark(args) -> int:
+    home = ensure_home(workspace(args))
+    data = load_sparks(home)
+    items = data["items"]
+
+    if args.action == "add":
+        if not args.title or not args.claim:
+            raise SystemExit("spark add needs --title and --claim")
+        spark_type = args.type or "design"
+        status = args.status or "seed"
+        next_move = args.next_move or "read"
+        if spark_type not in SPARK_TYPES:
+            raise SystemExit("type must be one of %s" % (SPARK_TYPES,))
+        if status not in SPARK_STATUS:
+            raise SystemExit("status must be one of %s" % (SPARK_STATUS,))
+        if next_move not in SPARK_MOVES:
+            raise SystemExit("next_move must be one of %s" % (SPARK_MOVES,))
+        item = {
+            "id": _next_spark_id(items),
+            "title": args.title,
+            "claim": args.claim,
+            "why_now": args.why_now or "",
+            "why_me": args.why_me or "",
+            "type": spark_type,
+            "status": status,
+            "next_move": next_move,
+            "riskiest_assumption": args.riskiest_assumption or "",
+            "smallest_test": args.smallest_test or "",
+            "prior_art": [],
+            "created": today_str(),
+            "updated": today_str(),
+        }
+        items.append(item)
+        save_sparks(home, data)
+        path = _write_spark(home, item)
+        print("spark added: %s (%s)" % (item["id"], path))
+        return 0
+
+    if args.action == "list":
+        rows = items
+        if args.status:
+            rows = [item for item in rows if item.get("status") == args.status]
+        if args.json:
+            print_json(rows)
+            return 0
+        if not rows:
+            print("No sparks captured. A spark is a candidate, not a commitment.")
+            return 0
+        print("%-6s %-34s %-10s %-10s %-10s %s" % (
+            "ID", "TITLE", "TYPE", "STATUS", "NEXT", "UPDATED",
+        ))
+        for item in rows:
+            print("%-6s %-34s %-10s %-10s %-10s %s" % (
+                item.get("id", "?"),
+                (item.get("title") or "")[:34],
+                item.get("type", "?"),
+                item.get("status", "?"),
+                item.get("next_move") or "-",
+                item.get("updated") or "-",
+            ))
+        return 0
+
+    if args.action in ("show", "update", "prior-art", "route") and not args.id:
+        raise SystemExit("--id is required for spark %s" % args.action)
+
+    item = _find_spark(items, args.id) if args.id else None
+    if item is None:
+        raise SystemExit("Spark not found: %s" % args.id)
+
+    if args.action == "show":
+        path = _write_spark(home, item)
+        if args.json:
+            print_json(item)
+        else:
+            print(path.read_text(encoding="utf-8"))
+        return 0
+
+    if args.action == "update":
+        if args.title is not None:
+            item["title"] = args.title
+        if args.claim is not None:
+            item["claim"] = args.claim
+        if args.why_now is not None:
+            item["why_now"] = args.why_now
+        if args.why_me is not None:
+            item["why_me"] = args.why_me
+        if args.type is not None:
+            item["type"] = args.type
+        if args.status is not None:
+            item["status"] = args.status
+        if args.next_move is not None:
+            item["next_move"] = args.next_move
+        if args.riskiest_assumption is not None:
+            item["riskiest_assumption"] = args.riskiest_assumption
+        if args.smallest_test is not None:
+            item["smallest_test"] = args.smallest_test
+        item["updated"] = today_str()
+        save_sparks(home, data)
+        _write_spark(home, item)
+        print("spark updated: %s" % item["id"])
+        return 0
+
+    if args.action == "prior-art":
+        if not args.source or not args.relation:
+            raise SystemExit("spark prior-art needs --source and --relation")
+        if args.relation not in SPARK_RELATIONS:
+            raise SystemExit("relation must be one of %s" % (SPARK_RELATIONS,))
+        item.setdefault("prior_art", []).append({
+            "source": args.source,
+            "relation": args.relation,
+            "note": args.note or "",
+        })
+        item["updated"] = today_str()
+        save_sparks(home, data)
+        _write_spark(home, item)
+        print("prior art added to %s: [%s] %s" % (
+            item["id"], args.relation, args.source,
+        ))
+        return 0
+
+    if args.action == "route":
+        if args.to not in ("curiosity", "systematic", "skill-drill", "deep-read", "project"):
+            raise SystemExit("route --to must be curiosity/systematic/skill-drill/deep-read/project")
+        item["next_move"] = args.to
+        item["status"] = "project" if args.to == "project" else "exploring"
+        item["updated"] = today_str()
+        save_sparks(home, data)
+        _write_spark(home, item)
+        routes = {
+            "curiosity": "用好奇心模式先弄懂其中一个子问题。",
+            "systematic": "把子问题加进问题地图：`map --action add ...`。",
+            "skill-drill": "用技能训练模式做一个最小原型。",
+            "deep-read": "用精读模式读先行工作（W3C charter、协议论文等）。",
+            "project": "做成项目：`replan --style project`，再用 `map --action add --horizon now` 加节点。",
+        }
+        print("spark %s routed to %s. %s" % (item["id"], args.to, routes[args.to]))
+        return 0
+
+    raise SystemExit("Unknown spark action: %s" % args.action)
+
+
 def _session_meta(path: Path) -> dict:
     text = path.read_text(encoding="utf-8")
     meta = {
@@ -1495,7 +1720,7 @@ def cmd_export(args) -> int:
         target.mkdir(parents=True, exist_ok=True)
         archive = target / ("edu-export-%s.zip" % today_str())
 
-    entries = ["config.json", "plan.md", "learner", "sessions", "notes"]
+    entries = ["config.json", "plan.md", "learner", "sessions", "notes", "sparks"]
     if args.include_corpus:
         entries.append("corpus")
     with zipfile.ZipFile(str(archive), "w", zipfile.ZIP_DEFLATED) as zf:
@@ -1515,18 +1740,21 @@ def _backup_workspace(home: Path) -> Path:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     dest = home / "backup" / stamp
     dest.mkdir(parents=True, exist_ok=True)
-    for rel in ("learner", "sessions", "notes"):
+    for rel in ("learner", "sessions", "notes", "sparks"):
         source = home / rel
         if source.exists():
             shutil.copytree(str(source), str(dest / rel), dirs_exist_ok=True)
+    plan_md = home / "plan.md"
+    if plan_md.exists():
+        shutil.copy2(str(plan_md), str(dest / "plan.md"))
     return dest
 
 
 def cmd_forget(args) -> int:
     home = ensure_home(workspace(args))
-    targets = [name for name in ("session", "topic", "all") if getattr(args, name)]
+    targets = [name for name in ("session", "topic", "spark", "all") if getattr(args, name)]
     if len(targets) != 1:
-        raise SystemExit("Choose exactly one of --session, --topic, or --all")
+        raise SystemExit("Choose exactly one of --session, --topic, --spark, or --all")
 
     sessions = sorted((home / "sessions").glob("*.md"))
     actions = []
@@ -1550,8 +1778,15 @@ def cmd_forget(args) -> int:
         actions.append("remove related reviews and misconceptions")
         actions.extend("delete session %s" % path.name for path in related_sessions)
 
+    if args.spark:
+        spark = _find_spark(load_sparks(home)["items"], args.spark)
+        if spark is None:
+            raise SystemExit("Spark not found: %s" % args.spark)
+        actions.append("remove spark %s" % args.spark)
+
     if args.all:
         actions.append("remove all learner profile, topics, misconceptions, and reviews")
+        actions.append("remove all sparks")
         actions.append("reset direction and plan")
         if (home / "plan.md").exists():
             actions.append("delete plan.md")
@@ -1588,11 +1823,21 @@ def cmd_forget(args) -> int:
             if _session_meta(path)["topic"] == args.topic:
                 path.unlink()
         _write_plan(home)
+    elif args.spark:
+        data = load_sparks(home)
+        data["items"] = [item for item in data["items"] if item.get("id") != args.spark]
+        save_sparks(home, data)
+        spark_md = home / "sparks" / ("%s.md" % args.spark)
+        if spark_md.exists():
+            spark_md.unlink()
     else:
         for path in sessions:
             path.unlink()
         for path in sorted((home / "notes").glob("*.md")):
             path.unlink()
+        for path in sorted((home / "sparks").glob("*.md")):
+            path.unlink()
+        save_sparks(home, {"version": 1, "items": []})
         profile = home / "learner" / "profile.md"
         if profile.exists():
             profile.unlink()
@@ -1623,6 +1868,32 @@ def cmd_validate(args) -> int:
     plan = load_plan(home)
     if plan.get("style") not in ("inquiry", "project"):
         errors.append("plan style must be inquiry or project")
+
+    seen_sparks = set()
+    for spark in load_sparks(home)["items"]:
+        missing = [
+            key for key in ("id", "title", "claim", "type", "status", "next_move")
+            if key not in spark
+        ]
+        if missing:
+            errors.append("spark missing fields %s: %r" % (missing, spark))
+        if spark.get("id") in seen_sparks:
+            errors.append("duplicate spark id: %s" % spark.get("id"))
+        seen_sparks.add(spark.get("id"))
+        if spark.get("type") not in SPARK_TYPES:
+            errors.append("spark type must be %s: %r" % (SPARK_TYPES, spark.get("type")))
+        if spark.get("status") not in SPARK_STATUS:
+            errors.append("spark status must be %s: %r" % (SPARK_STATUS, spark.get("status")))
+        if spark.get("next_move") not in SPARK_MOVES:
+            errors.append("spark next_move must be %s: %r" % (SPARK_MOVES, spark.get("next_move")))
+        for entry in spark.get("prior_art", []):
+            if not isinstance(entry, dict):
+                errors.append("spark prior_art must be objects: %r" % entry)
+                continue
+            if entry.get("relation") not in SPARK_RELATIONS:
+                errors.append("spark prior_art relation must be %s: %r" % (
+                    SPARK_RELATIONS, entry.get("relation"),
+                ))
 
     seen_topics = set()
     for topic in load_items(home, "topics.json")["items"]:
@@ -1722,8 +1993,9 @@ def cmd_validate(args) -> int:
     if errors:
         print("validation failed: %d error(s)" % len(errors))
         return 1
-    print("validation ok: retrieval=%s, %d topic(s), %d review(s), %d session(s)" % (
-        config.get("retrieval_mode"), len(seen_topics), len(seen_reviews), len(seen_sessions),
+    print("validation ok: retrieval=%s, %d topic(s), %d spark(s), %d review(s), %d session(s)" % (
+        config.get("retrieval_mode"), len(seen_topics), len(seen_sparks),
+        len(seen_reviews), len(seen_sessions),
     ))
     return 0
 
@@ -1782,6 +2054,28 @@ def build_parser() -> argparse.ArgumentParser:
     add_home(p)
     p.add_argument("--topic-id", required=True)
     p.set_defaults(func=cmd_calibrate)
+
+    p = sub.add_parser("spark", help="capture and triage ideas")
+    add_home(p)
+    p.add_argument("--action", required=True,
+                   choices=("add", "list", "show", "update", "prior-art", "route"))
+    p.add_argument("--id", default=None)
+    p.add_argument("--title", default=None)
+    p.add_argument("--claim", default=None)
+    p.add_argument("--why-now", default=None)
+    p.add_argument("--why-me", default=None)
+    p.add_argument("--type", default=None, choices=SPARK_TYPES)
+    p.add_argument("--status", default=None, choices=SPARK_STATUS)
+    p.add_argument("--next-move", default=None, choices=SPARK_MOVES)
+    p.add_argument("--riskiest-assumption", default=None)
+    p.add_argument("--smallest-test", default=None)
+    p.add_argument("--source", default=None)
+    p.add_argument("--relation", default=None, choices=SPARK_RELATIONS)
+    p.add_argument("--note", default=None)
+    p.add_argument("--to", default=None,
+                   choices=("curiosity", "systematic", "skill-drill", "deep-read", "project"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_spark)
 
     p = sub.add_parser("config", help="show or change configuration")
     add_home(p)
@@ -1913,6 +2207,7 @@ def build_parser() -> argparse.ArgumentParser:
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--session", default=None)
     group.add_argument("--topic", default=None)
+    group.add_argument("--spark", default=None)
     group.add_argument("--all", action="store_true")
     p.add_argument("--apply", action="store_true",
                    help="actually delete; without it the command only previews")

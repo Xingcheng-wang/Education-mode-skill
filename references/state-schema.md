@@ -16,6 +16,9 @@
 │   └── 0001-2026-10-20-topic.md
 ├── notes/
 │   └── <source-id>.md
+├── sparks/
+│   ├── index.json                 # 想法索引与状态
+│   └── s0001.md                   # 单个 spark note
 ├── backup/
 │   └── <timestamp>/               # forget 前自动备份
 └── corpus/
@@ -39,6 +42,8 @@
 | `learner/schedule.json` | `edu.py` | 模型不手改 |
 | `sessions/*.md` | 模型/`edu.py` | 按同意级别写；默认 `outline`，`off` 不写 |
 | `notes/*.md` | 模型/用户 | 可编辑，保留来源标注 |
+| `sparks/index.json` | `edu.py` | 想法索引；模型不手改 |
+| `sparks/*.md` | `edu.py` | 由 `spark` 命令生成，不手改 |
 | `backup/**` | `edu.py` | `forget` 前自动备份 |
 | `corpus/**` | `edu.py` | 模型只读 |
 
@@ -201,6 +206,39 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
 - `grade` / `lapses` / `ease` 只作为内部建议参数，不向用户展示。
 - 复习由学习者发起；不显示"到期数量""逾期"。
 
+## sparks/index.json
+
+```json
+{
+  "version": 1,
+  "items": [
+    {
+      "id": "s0001",
+      "title": "统一 LLM 记忆格式",
+      "claim": "用一套格式/协议统一记忆的组织、存储与迁移",
+      "why_now": "agent 记忆碎片化",
+      "why_me": "我在做学习记录",
+      "type": "design",
+      "status": "seed",
+      "next_move": "read",
+      "riskiest_assumption": "厂商没有采用动机",
+      "smallest_test": "两个系统导出导入再导出，测语义损失",
+      "prior_art": [
+        {"source": "W3C AI Agent Memory Interop CG", "relation": "adjacent", "note": "标准化讨论"}
+      ],
+      "created": "2026-10-20",
+      "updated": "2026-10-20"
+    }
+  ]
+}
+```
+
+- `type`: `question` | `hypothesis` | `design` | `project`
+- `status`: `seed` | `exploring` | `parked` | `project`
+- `next_move`: `park` | `read` | `test` | `project` | `curiosity` | `systematic` | `skill-drill` | `deep-read`
+- `prior_art[].relation`: `solved` | `adjacent` | `open` | `different`
+- `sparks/s0001.md` 是同一内容的人可读版本；`park` 是合法结果，没有提醒或排名。
+
 ## 滚动计划
 
 | 命令 | 作用 |
@@ -209,8 +247,19 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
 | `map --action add/update/drop` | 学习者增删改节点；模型只建议 |
 | `replan` | 复盘方向与视野；可更新 `direction` / `style` |
 | `calibrate --topic-id` | 查看当前假设、置信度、证据，并给出 2–3 个探针的建议 |
+| `spark add/list/show/update/prior-art/route` | 捕获想法、查先行工作、更新状态、路由到其他模式 |
 
 `plan.md` 不显示完成率、覆盖率或理解等级；它只显示方向、节点、why 和 next action。
+
+Spark 路由：
+
+| `--to` | 结果 |
+|---|---|
+| `curiosity` | 先弄懂一个子问题 |
+| `deep-read` | 精读先行工作 |
+| `systematic` | 加进问题地图 |
+| `skill-drill` | 做最小原型 |
+| `project` | 转项目型滚动计划 |
 
 ## 会话记录
 
@@ -286,8 +335,8 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
 |---|---|
 | `records` | 列出已存会话的元数据：日期、主题、模式、同意级别、是否含原话 |
 | `session --id` | 显示单条记录；outline 记录会标注"不含原话" |
-| `export --to <zip或目录>` | 导出 config/learner/sessions/notes；`--include-corpus` 可含资料索引 |
-| `forget --session/--topic/--all` | 默认 dry-run；`--apply` 才删除，删除前自动备份到 `backup/<timestamp>/` |
+| `export --to <zip或目录>` | 导出 config/learner/sessions/notes/sparks；`--include-corpus` 可含资料索引 |
+| `forget --session/--topic/--spark/--all` | 默认 dry-run；`--apply` 才删除，删除前自动备份到 `backup/<timestamp>/` |
 
 ## 记录规则
 

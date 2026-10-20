@@ -4,7 +4,7 @@
 
 适用于内网/离线生产机器，也适用于允许联网补查资料的普通环境。目标模型按**标准大模型**设计：1M 上下文、可靠指令遵循与工具调用、**非多模态**。
 
-- 版本：0.5.0
+- 版本：0.6.0
 - 运行环境：**Python 3.12+**（仅标准库，无第三方依赖）
 - 形态：Agent Skill（`SKILL.md` + 按需加载的 references + 纯标准库脚本）
 - 许可：MIT
@@ -19,7 +19,7 @@
 2. **求知欲**：好奇心、探索的兴趣、终身学习的意愿。学完之后还想继续，而不是"终于完成了"。
 3. **实践能力**：把知识用到真实任务、做出东西、解决问题，并在应用中修正理解。
 
-四种模式只是手段。完整标尺与反异化清单见 [`references/learning-goals.md`](references/learning-goals.md)。
+四种学习模式只是手段。**Spark 是第五个入口**，负责给突然出现的想法做 triage：先判断有没有人做过、值不值得继续、下一步是什么。完整标尺与反异化清单见 [`references/learning-goals.md`](references/learning-goals.md)。
 
 ---
 
@@ -86,7 +86,7 @@ v0.1/v0.2 有三个需要修正的默认假设，v0.3 已更新：
 
 ---
 
-## 三、四种模式
+## 三、四种学习模式 + Spark
 
 | 模式 | 用户信号 | 这一轮可能留下的东西 |
 |---|---|---|
@@ -94,6 +94,7 @@ v0.1/v0.2 有三个需要修正的默认假设，v0.3 已更新：
 | `systematic` 系统学习 | "从零学/给个计划/系统学" | Now / Next / Later 的滚动地图 + 下一个最小动作 |
 | `skill-drill` 技能训练 | "练习/提升/给我反馈" | 一个想调整的环节 + 一次真实迁移 |
 | `deep-read` 精读 | "读论文/这本书/这一章" | 能重建论证的笔记 + 评价 |
+| `spark` 想法分诊 | "我有个想法/为什么不做 X/这是不是有人做过" | 一个 spark note + 先行工作 + 最小验证 |
 
 节奏由学习者决定，没有默认时盒；随时可以停。
 
@@ -125,6 +126,48 @@ v0.1/v0.2 有三个需要修正的默认假设，v0.3 已更新：
 这一轮还想探索什么：<一个用户可能真的想知道的问题>
 下一轮想试什么：<一个可选的实践动作或下一步>
 ```
+
+### Spark 模式：想法捕获与分诊
+
+Spark 与好奇心的边界：
+
+- **好奇心**：回答“世界是什么样”，终点是“我懂了”。
+- **Spark**：回答“这个想法值不值得继续、下一步是什么”，终点是 `park / read / test / project`。
+
+判断口诀：
+
+- “给我一个完美解释，我就满意地结束” → 好奇心。
+- “我需要知道有没有人做过/值不值得投入” → Spark。
+- “我有一个可以被验证、被反驳的主张” → Spark。
+- 边界不清时只问一句：“你是想弄懂这个领域，还是想判断这个想法值不值得做？”
+
+流程：
+
+```
+Capture → Classify → Prior-art triage → Decompose → Decide → Record → Route
+```
+
+- `Capture`：一句话主张、为什么现在、为什么是我、类型。
+- `Prior-art`：限时 30–60 分钟，找 5–10 个直接/相邻工作，标注 `solved / adjacent / open / different`。
+- `Decompose`：子问题、最危险假设、1–2 天的最小验证。
+- `Decide`：`park`（合法成功）/ `read` / `test` / `project`。
+- `Route`：`curiosity` / `deep-read` / `systematic` / `skill-drill` / `project`。
+
+命令：
+
+```bash
+edu.py spark --home ~/.edu --action add --title "统一 LLM 记忆格式" \
+  --claim "用一套格式/协议统一记忆" --type design \
+  --riskiest-assumption "厂商没有采用动机" \
+  --smallest-test "两个系统导出导入再导出，测语义损失"
+
+edu.py spark --home ~/.edu --action prior-art --id s0001 \
+  --source "W3C AI Agent Memory Interop CG" --relation adjacent
+
+edu.py spark --home ~/.edu --action route --id s0001 --to deep-read
+```
+
+Spark 不提醒、不排名、不显示“你还有 N 个想法没处理”。Park 是成功，不是失败。
 
 ### 滚动式学习计划
 
@@ -226,14 +269,15 @@ edu.py checkpoint --home ~/.edu --topic-id calculus/limits --consent outline \
 │   │   ├── curiosity.md
 │   │   ├── systematic.md
 │   │   ├── skill-drill.md
-│   │   └── deep-read.md
+│   │   ├── deep-read.md
+│   │   └── spark.md             # 想法捕获、先行工作、分诊与路由
 │   ├── pedagogy/
 │   │   ├── assessment.md        # 反馈、诊断式提问、理解假设与置信度
 │   │   └── memory.md            # 检索、间隔、交错、SM-2
 │   └── state-schema.md          # 状态字段、滚动计划、写入规则
-├── assets/templates/            # 无脚本时的手工状态模板（含 plan.md）
-├── scripts/edu.py               # 纯标准库：计划 / 索引 / BM25 / SM-2 / 记录 / 校验
-└── evals/rubric.md              # 24 个教学/计划/诊断 + 10 个控制权用例
+├── assets/templates/            # 无脚本时的手工状态模板（含 plan.md、spark.md）
+├── scripts/edu.py               # 纯标准库：计划 / Spark / 索引 / BM25 / SM-2 / 记录 / 校验
+└── evals/rubric.md              # 28 个教学/计划/诊断/Spark + 10 个控制权用例
 ```
 
 ### 加载策略
@@ -261,6 +305,7 @@ edu.py checkpoint --home ~/.edu --topic-id calculus/limits --consent outline \
 - `init` / `doctor`：初始化与部署检查（Python 3.12+）
 - `plan` / `map` / `replan`：滚动计划、节点编辑、方向复盘
 - `calibrate`：给出 2–3 个探针的校准协议
+- `spark`：捕获想法、先行工作、状态、路由到其他模式
 - `config`：查看配置；`retrieval_mode` 只能由用户修改
 - `ingest`：索引 txt / md / epub / pdf；网页来源可带 `--url`、`--retrieved-at`
 - `source`：查看来源元数据（含 URL、访问日期）
@@ -405,7 +450,7 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 
 ## 八、评测
 
-`evals/rubric.md` 提供 24 个教学/计划/诊断用例 + 10 个控制权用例（V1–V10），覆盖：
+`evals/rubric.md` 提供 28 个教学/计划/诊断/Spark 用例 + 10 个控制权用例（V1–V10），覆盖：
 
 1. 好奇心模式先诊断再讲解
 2. 用户要求直接答案时不强迫苏格拉底
@@ -431,6 +476,10 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 22. 不确定性：状态是假设，显示 confidence/range
 23. 信心校准：高信心答错、低信心答对
 24. 用户拒绝提问：直接讲，承认状态不确定
+25. Spark vs 好奇心：问题还是候选想法
+26. 先行工作：限时检索，标注 solved/adjacent/open/different
+27. Park 是成功：不追着用户做
+28. Spark 路由：curiosity/deep-read/systematic/skill-drill/project
 
 控制权用例：不记录、退出、遗忘、导出、复习不被催、无债务语言、检索边界、标准归学习者、只想听、默认大纲。
 
@@ -450,6 +499,8 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 - 默认 `outline` 记录只含概要，不含原话；只有用户明确选择 `verbatim` 才保存原话。共享机器仍需设置目录权限。
 - 记录可查看、导出、删除；`forget` 默认 dry-run，删除前自动备份。
 - 1M 上下文是目标假设；实际模型上下文不足时，由部署方调整 `context_window` 并使用 `outline`/`search` 分段策略。
+- Spark 只做轻量 triage，不保证新颖性，也不能替代完整文献综述、专利检索或专家判断。
+- `local` 模式下，Spark 的先行工作只能查本地 corpus；需要联网检索时由用户切换 `retrieval_mode`。
 - 本 skill 不提供分数、等级、证书、排名或完成率。如果组织需要这些，应另行接入外部评估，而不是让学习对话承担考核功能。
 
 ---
@@ -463,6 +514,7 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 - 可选本地 OCR 钩子（不内置模型，只调用已有工具）。
 - 记录同意、导出、遗忘的控制权用例自动化。
 - 滚动计划与自适应诊断的模型评测（Now/Next/Later、2–5 探针、置信度校准）。
+- Spark 模式的真实使用评测（先行工作质量、park 率、路由准确性）。
 
 ---
 
