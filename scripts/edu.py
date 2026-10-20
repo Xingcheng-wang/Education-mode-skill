@@ -47,7 +47,7 @@ from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 MIN_PYTHON = (3, 12)
 
 DEFAULT_PLAN = {
@@ -94,6 +94,15 @@ STATUS_LABELS = {
     "review": "巩固中",
     "mastered": "能应用",
 }
+
+GLOSSARY_TEMPLATE = """# Glossary
+
+| term | full form | plain meaning | example | first seen |
+|---|---|---|---|---|
+| LLM | Large Language Model，大语言模型 | 一种用大量文本训练、能生成语言的模型 | 用 LLM 解释概念 | 2026-10-20 |
+
+规则：术语第一次出现时给全称、白话解释、一个例子，然后写入这里。
+"""
 
 PROFILE_TEMPLATE = """# Learner Profile
 
@@ -231,6 +240,10 @@ def ensure_home(home: Path, lang: str = "auto") -> Path:
     profile = home / "learner" / "profile.md"
     if not profile.exists():
         profile.write_text(PROFILE_TEMPLATE, encoding="utf-8")
+
+    glossary = home / "learner" / "glossary.md"
+    if not glossary.exists():
+        glossary.write_text(GLOSSARY_TEMPLATE, encoding="utf-8")
 
     for name in ("topics.json", "misconceptions.json", "schedule.json"):
         path = home / "learner" / name
@@ -1785,7 +1798,7 @@ def cmd_forget(args) -> int:
         actions.append("remove spark %s" % args.spark)
 
     if args.all:
-        actions.append("remove all learner profile, topics, misconceptions, and reviews")
+        actions.append("remove all learner profile, glossary, topics, misconceptions, and reviews")
         actions.append("remove all sparks")
         actions.append("reset direction and plan")
         if (home / "plan.md").exists():
@@ -1838,9 +1851,10 @@ def cmd_forget(args) -> int:
         for path in sorted((home / "sparks").glob("*.md")):
             path.unlink()
         save_sparks(home, {"version": 1, "items": []})
-        profile = home / "learner" / "profile.md"
-        if profile.exists():
-            profile.unlink()
+        for name in ("profile.md", "glossary.md"):
+            path = home / "learner" / name
+            if path.exists():
+                path.unlink()
         plan_md = home / "plan.md"
         if plan_md.exists():
             plan_md.unlink()

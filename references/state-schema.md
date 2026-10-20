@@ -8,6 +8,7 @@
 ├── plan.md                        # 人可读的 Now / Next / Later
 ├── learner/
 │   ├── profile.md
+│   ├── glossary.md                # 全局术语表
 │   ├── plan.json                  # 方向、计划风格
 │   ├── topics.json
 │   ├── misconceptions.json
@@ -35,6 +36,7 @@
 |---|---|---|
 | `config.json` | 用户；模型只能提示用户手动执行 `config --set retrieval_mode` | 模型不得自行改检索模式 |
 | `learner/profile.md` | 模型/用户 | 可编辑；默认不保存原话 |
+| `learner/glossary.md` | 模型/用户 | 术语首现时追加；不堆词典 |
 | `learner/plan.json` | `edu.py` | 方向与计划风格；模型不手改 |
 | `plan.md` | `edu.py` | 由 `plan` / `map` / `replan` 生成，不手改 |
 | `learner/topics.json` | `edu.py` | 模型不手改 |
@@ -75,6 +77,20 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
 | `max_explanation_words` | 可选用户偏好；旧配置可能保留，但不再是默认值 |
 
 旧版 `allow_network` 会被自动迁移：`false → local`，`true → web`。迁移后不再使用该字段。
+
+## learner/glossary.md
+
+```markdown
+# Glossary
+
+| term | full form | plain meaning | example | first seen |
+|---|---|---|---|---|
+| LLM | Large Language Model，大语言模型 | 一种用大量文本训练、能生成语言的模型 | 用 LLM 解释概念 | 2026-10-20 |
+```
+
+- 术语第一次出现时追加一行；同一术语不重复解释。
+- 输出格式：`中文（English, ABBR）——一句白话。例：……`
+- 不做缩写汤；能白话就不缩写。
 
 ## learner/plan.json
 

@@ -1,10 +1,10 @@
 # Education Mode（本地优先，可选联网检索）
 
-一个可以装进 Agent 的对话式学习 skill：**本地检索为默认，联网检索可配置；状态与排程交给本地脚本，把教学留给模型**。
+一个可以装进 Agent 的对话式学习 skill：**实践优先、引导式发现；本地检索为默认，联网检索可配置；状态与排程交给本地脚本，把教学留给模型**。
 
 适用于内网/离线生产机器，也适用于允许联网补查资料的普通环境。目标模型按**标准大模型**设计：1M 上下文、可靠指令遵循与工具调用、**非多模态**。
 
-- 版本：0.6.0
+- 版本：0.7.0
 - 运行环境：**Python 3.12+**（仅标准库，无第三方依赖）
 - 形态：Agent Skill（`SKILL.md` + 按需加载的 references + 纯标准库脚本）
 - 许可：MIT
@@ -13,13 +13,43 @@
 
 ## 零、三个目标（总标尺）
 
-这个 skill 不以"讲了多少内容、刷了多少题、连续学了多少天"衡量成功。它只关心三件事：
+这个 skill 不以"讲了多少内容、刷了多少题、连续学了多少天"衡量成功。它只关心三件事，**实践是组织原则**：
 
-1. **知识水平**：知识体系的深度与广度。能解释、能联系、能指出边界、能质疑；能看到不同领域之间的连接。
-2. **求知欲**：好奇心、探索的兴趣、终身学习的意愿。学完之后还想继续，而不是"终于完成了"。
-3. **实践能力**：把知识用到真实任务、做出东西、解决问题，并在应用中修正理解。
+1. **实践能力**：把知识用到真实任务、做出东西、解决问题；实践是知识的来源和检验。
+2. **知识水平**：知识体系的深度与广度。能解释、能联系、能指出边界、能质疑；能看到不同领域之间的连接。
+3. **求知欲**：好奇心、探索的兴趣、终身学习的意愿。学完之后还想继续，而不是"终于完成了"。
 
 四种学习模式只是手段。**Spark 是第五个入口**，负责给突然出现的想法做 triage：先判断有没有人做过、值不值得继续、下一步是什么。完整标尺与反异化清单见 [`references/learning-goals.md`](references/learning-goals.md)。
+
+### 实践优先与引导式发现
+
+- 先做/先试/先观察，再命名；概念是工具，不是定义背诵。
+- 顺序从“定义 → 例子 → 练习”翻转为“现象/任务 → 尝试/预测 → 观察 → 命名 → 再实践”。
+- 引导式发现：让用户先注意、先猜、先试；卡住或明确要求时直接教。
+- 最小帮助：只给能继续往前的最小提示，然后撤掉。
+- 完整说明见 [`references/pedagogy/philosophy.md`](references/pedagogy/philosophy.md)。
+
+### 语气
+
+- 轻松但不轻浮，风趣但不油滑，鼓励但不空洞。
+- 幽默是降低威胁、保护好奇，不是表演；一轮一个轻点。
+- 不拿用户的知识、错误、身份开玩笑；用户沮丧时关掉幽默。
+- 鼓励具体到行为，不说“你真棒”。
+- 完整说明见 [`references/pedagogy/voice.md`](references/pedagogy/voice.md)。
+
+### 术语首现
+
+任何缩写、英文简写、专业词第一次出现时，给全称、一句话白话、一个例子，并写入 `learner/glossary.md`：
+
+> LLM（Large Language Model，大语言模型）——一种用大量文本训练、能生成语言的模型。例：用 LLM 解释概念。
+
+不做缩写汤；能白话就不缩写。完整说明见 [`references/pedagogy/language.md`](references/pedagogy/language.md)。
+
+### 脑科学约束
+
+- 用预测误差、检索、间隔、交错、认知负荷、双重编码、具身行动、睡眠巩固、压力与安全等机制。
+- 明确排除学习风格、左右脑、10% 大脑、睡眠学习、通用大脑训练等 neuromyth。
+- 脑科学是约束和机制，不是营销话术。完整说明见 [`references/pedagogy/brain.md`](references/pedagogy/brain.md)。
 
 ---
 
@@ -273,11 +303,15 @@ edu.py checkpoint --home ~/.edu --topic-id calculus/limits --consent outline \
 │   │   └── spark.md             # 想法捕获、先行工作、分诊与路由
 │   ├── pedagogy/
 │   │   ├── assessment.md        # 反馈、诊断式提问、理解假设与置信度
-│   │   └── memory.md            # 检索、间隔、交错、SM-2
+│   │   ├── memory.md            # 检索、间隔、交错、SM-2
+│   │   ├── philosophy.md        # 实践优先、引导式发现、反教条、最小帮助
+│   │   ├── voice.md             # 语气、幽默边界、具体鼓励
+│   │   ├── language.md          # 术语首现、缩写格式、glossary
+│   │   └── brain.md             # 可用机制与 neuromyth 排除
 │   └── state-schema.md          # 状态字段、滚动计划、写入规则
-├── assets/templates/            # 无脚本时的手工状态模板（含 plan.md、spark.md）
+├── assets/templates/            # 无脚本时的手工状态模板（含 plan.md、spark.md、glossary.md）
 ├── scripts/edu.py               # 纯标准库：计划 / Spark / 索引 / BM25 / SM-2 / 记录 / 校验
-└── evals/rubric.md              # 28 个教学/计划/诊断/Spark + 10 个控制权用例
+└── evals/rubric.md              # 36 个教学/计划/诊断/Spark/实践 + 10 个控制权用例
 ```
 
 ### 加载策略
@@ -306,6 +340,7 @@ edu.py checkpoint --home ~/.edu --topic-id calculus/limits --consent outline \
 - `plan` / `map` / `replan`：滚动计划、节点编辑、方向复盘
 - `calibrate`：给出 2–3 个探针的校准协议
 - `spark`：捕获想法、先行工作、状态、路由到其他模式
+- `learner/glossary.md`：术语首现时由模型追加；不是命令，是会话约定
 - `config`：查看配置；`retrieval_mode` 只能由用户修改
 - `ingest`：索引 txt / md / epub / pdf；网页来源可带 `--url`、`--retrieved-at`
 - `source`：查看来源元数据（含 URL、访问日期）
@@ -450,7 +485,7 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 
 ## 八、评测
 
-`evals/rubric.md` 提供 28 个教学/计划/诊断/Spark 用例 + 10 个控制权用例（V1–V10），覆盖：
+`evals/rubric.md` 提供 36 个教学/计划/诊断/Spark/实践用例 + 10 个控制权用例（V1–V10），覆盖：
 
 1. 好奇心模式先诊断再讲解
 2. 用户要求直接答案时不强迫苏格拉底
@@ -480,6 +515,14 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 26. 先行工作：限时检索，标注 solved/adjacent/open/different
 27. Park 是成功：不追着用户做
 28. Spark 路由：curiosity/deep-read/systematic/skill-drill/project
+29. 实践优先：先做再命名，不定义先行
+30. 引导式发现：先猜/先试，不抢答
+31. 幽默边界：不嘲讽、不空洞、焦虑时关掉
+32. 术语首现：全称 + 白话 + 例子 + glossary
+33. 预测/错误：错误是信息
+34. 最小帮助：提示分级与撤离
+35. 直接教学：用户要求时停止引导
+36. Neuromyth：不传播学习风格/左右脑/10% 大脑
 
 控制权用例：不记录、退出、遗忘、导出、复习不被催、无债务语言、检索边界、标准归学习者、只想听、默认大纲。
 
@@ -501,6 +544,8 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 - 1M 上下文是目标假设；实际模型上下文不足时，由部署方调整 `context_window` 并使用 `outline`/`search` 分段策略。
 - Spark 只做轻量 triage，不保证新颖性，也不能替代完整文献综述、专利检索或专家判断。
 - `local` 模式下，Spark 的先行工作只能查本地 corpus；需要联网检索时由用户切换 `retrieval_mode`。
+- 脑科学/认知科学的证据强弱不一；skill 只用相对稳的机制（检索、间隔、交错、认知负荷等），不保证对每个个体都同样有效。
+- 术语解释依赖模型判断“是否第一次出现”；共享词表可以减轻重复，但不能保证零遗漏。
 - 本 skill 不提供分数、等级、证书、排名或完成率。如果组织需要这些，应另行接入外部评估，而不是让学习对话承担考核功能。
 
 ---
@@ -515,6 +560,7 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 - 记录同意、导出、遗忘的控制权用例自动化。
 - 滚动计划与自适应诊断的模型评测（Now/Next/Later、2–5 探针、置信度校准）。
 - Spark 模式的真实使用评测（先行工作质量、park 率、路由准确性）。
+- 实践优先、引导式发现、幽默语气、术语首现、最小帮助的模型评测。
 
 ---
 
