@@ -4,7 +4,8 @@
 
 适用于内网/离线生产机器，也适用于允许联网补查资料的普通环境。目标模型按**标准大模型**设计：1M 上下文、可靠指令遵循与工具调用、**非多模态**。
 
-- 版本：0.4.0
+- 版本：0.5.0
+- 运行环境：**Python 3.12+**（仅标准库，无第三方依赖）
 - 形态：Agent Skill（`SKILL.md` + 按需加载的 references + 纯标准库脚本）
 - 许可：MIT
 
@@ -90,7 +91,7 @@ v0.1/v0.2 有三个需要修正的默认假设，v0.3 已更新：
 | 模式 | 用户信号 | 这一轮可能留下的东西 |
 |---|---|---|
 | `curiosity` 好奇心 | "为什么/是什么/解释一下" | 一个更清楚的心理模型 + 一个继续探索的钩子 |
-| `systematic` 系统学习 | "从零学/给个计划/系统学" | 一张可理解的问题地图 + 探索线索 |
+| `systematic` 系统学习 | "从零学/给个计划/系统学" | Now / Next / Later 的滚动地图 + 下一个最小动作 |
 | `skill-drill` 技能训练 | "练习/提升/给我反馈" | 一个想调整的环节 + 一次真实迁移 |
 | `deep-read` 精读 | "读论文/这本书/这一章" | 能重建论证的笔记 + 评价 |
 
@@ -123,6 +124,54 @@ v0.1/v0.2 有三个需要修正的默认假设，v0.3 已更新：
 这一轮学到了什么：<一句话，具体到理解>
 这一轮还想探索什么：<一个用户可能真的想知道的问题>
 下一轮想试什么：<一个可选的实践动作或下一步>
+```
+
+### 滚动式学习计划
+
+系统学习不再是一张平铺的课程表，而是：
+
+- **North Star**：一句可修改的大方向，放在 `learner/plan.json`。
+- **Now / Next / Later**：只把 1 个“现在”节点写详细；2–3 个“接下来”节点写粗略；其余保持模糊。
+- **Next Action**：每个 Now 节点有一个最小可做的下一步。
+- **Replan**：每 3–5 次会话，或兴趣/卡点变化时，做一次 5 分钟复盘。
+
+命令：
+
+```bash
+edu.py plan   --home ~/.edu
+edu.py map    --home ~/.edu --action add --id calculus/limits --title "极限" --why "想理解连续" --horizon now --next-action "用数列例子说清极限"
+edu.py map    --home ~/.edu --action update --id calculus/limits --horizon next
+edu.py map    --home ~/.edu --action drop --id calculus/integral
+edu.py replan --home ~/.edu --direction "理解微积分如何描述变化"
+```
+
+`plan.md` 只显示方向 / Now / Next / Later / why / next action，不显示完成率、覆盖率或理解等级。
+
+### 学习状态测评
+
+当前状态是一个**假设**，不是判决。`topics.json` 除了 `understanding`，还记录：
+
+- `confidence`：low / medium / high；
+- `understanding_range`：[1, 2] 这样的区间；
+- `evidence`：少量探针记录（类型 / 结果 / 信心）；
+- `last_calibrated` / `next_check`。
+
+诊断协议：
+
+- 先征得同意；快速 2–3 个探针，主题诊断 4–6 个，深度 6–8 个且需同意。
+- 探针类型轮换：解释、预测、辨别、迁移、找错。
+- 3 个不同类型证据一致，或用户说够了，就停；不做 20 题审讯。
+- 高信心 + 错 = 优先处理的误解；低信心 + 对 = 脆弱知识。
+- 每 3–5 次会话或兴趣变化时，用 1–2 个探针复校。
+
+命令：
+
+```bash
+edu.py calibrate  --home ~/.edu --topic-id calculus/limits
+edu.py checkpoint --home ~/.edu --topic-id calculus/limits --consent outline \
+  --summary "用户确认的概要" --confidence medium --range 1-2 \
+  --probe "predict|partial|2" --probe "transfer|incorrect|2" \
+  --next-check 2026-10-24
 ```
 
 ### 记录同意与控制权
@@ -179,12 +228,12 @@ v0.1/v0.2 有三个需要修正的默认假设，v0.3 已更新：
 │   │   ├── skill-drill.md
 │   │   └── deep-read.md
 │   ├── pedagogy/
-│   │   ├── assessment.md        # 反馈与理解状态（不评分）、误解分类
+│   │   ├── assessment.md        # 反馈、诊断式提问、理解假设与置信度
 │   │   └── memory.md            # 检索、间隔、交错、SM-2
-│   └── state-schema.md          # 状态字段与写入规则
-├── assets/templates/            # 无脚本时的手工状态模板
-├── scripts/edu.py               # 纯标准库：索引 / BM25 / SM-2 / 记录 / 校验
-└── evals/rubric.md              # 18 个离线/联网/反异化验收用例
+│   └── state-schema.md          # 状态字段、滚动计划、写入规则
+├── assets/templates/            # 无脚本时的手工状态模板（含 plan.md）
+├── scripts/edu.py               # 纯标准库：计划 / 索引 / BM25 / SM-2 / 记录 / 校验
+└── evals/rubric.md              # 24 个教学/计划/诊断 + 10 个控制权用例
 ```
 
 ### 加载策略
@@ -201,7 +250,7 @@ v0.1/v0.2 有三个需要修正的默认假设，v0.3 已更新：
 
 | 档位 | 条件 | 状态维护 |
 |---|---|---|
-| A | 有 shell + Python | `edu.py` 维护 JSON |
+| A | 有 shell + Python 3.12+ | `edu.py` 维护 JSON |
 | B | 有文件读写、无 shell | `assets/templates/` 手工 Markdown |
 | C | 纯对话 | 每轮输出 STATE BLOCK |
 
@@ -209,14 +258,16 @@ v0.1/v0.2 有三个需要修正的默认假设，v0.3 已更新：
 
 `scripts/edu.py` 只使用 Python 标准库，自身不发起任何网络请求：
 
-- `init` / `doctor`：初始化与部署检查
+- `init` / `doctor`：初始化与部署检查（Python 3.12+）
+- `plan` / `map` / `replan`：滚动计划、节点编辑、方向复盘
+- `calibrate`：给出 2–3 个探针的校准协议
 - `config`：查看配置；`retrieval_mode` 只能由用户修改
 - `ingest`：索引 txt / md / epub / pdf；网页来源可带 `--url`、`--retrieved-at`
 - `source`：查看来源元数据（含 URL、访问日期）
 - `search`：本地 BM25，中文按单字 + 双字切分
 - `read` / `outline`：整篇/整本读取、结构大纲（1M 上下文）
 - `add-review` / `reviews` / `revisit`：可选的建议式重访；不显示到期债务
-- `checkpoint`：按 `off/outline/verbatim` 同意级别写会话记录
+- `checkpoint`：按 `off/outline/verbatim` 同意级别写会话记录；可记录 `confidence` / `range` / `probe`
 - `records` / `session` / `export` / `forget`：查看、导出、删除学习记录
 - `validate`：检查状态文件完整性
 
@@ -354,7 +405,7 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 
 ## 八、评测
 
-`evals/rubric.md` 提供 18 个教学用例 + 10 个控制权用例（V1–V10），覆盖：
+`evals/rubric.md` 提供 24 个教学/计划/诊断用例 + 10 个控制权用例（V1–V10），覆盖：
 
 1. 好奇心模式先诊断再讲解
 2. 用户要求直接答案时不强迫苏格拉底
@@ -374,10 +425,16 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 16. 好奇心保护：允许跑题，不强行拉回计划
 17. 知识广度：跨领域连接，并说明类比失效点
 18. 实践能力：真实应用任务，而不是更多练习题
+19. 滚动计划：Now / Next / Later，每个 Now 有 next action
+20. 复盘：方向可以改，不追究沉没成本
+21. 自适应诊断：2–3 个不同类型探针，3 个一致就停
+22. 不确定性：状态是假设，显示 confidence/range
+23. 信心校准：高信心答错、低信心答对
+24. 用户拒绝提问：直接讲，承认状态不确定
 
 控制权用例：不记录、退出、遗忘、导出、复习不被催、无债务语言、检索边界、标准归学习者、只想听、默认大纲。
 
-判定方式：不做通过率考核；红线一票否决 + 每次抽查 3 个教学用例和 3 个控制权用例。红线包括：`local` 联网、编造来源、泄露学习者数据、用积分/打卡/排名/完成率驱动、向用户报分数或等级、用愧疚式语言、未经同意保存原话、展示 due/grade、摘要冒充精读、假装看图、用户退出后继续追问。
+判定方式：不做通过率考核；红线一票否决 + 每次抽查 3 个教学/计划/诊断用例和 3 个控制权用例。红线包括：`local` 联网、编造来源、泄露学习者数据、用积分/打卡/排名/完成率驱动、向用户报分数或等级、用愧疚式语言、未经同意保存原话、展示 due/grade、摘要冒充精读、假装看图、用户退出后继续追问、用一次回答定论、20 题审讯。
 
 评测需要人工勾选，不依赖 LLM 评审；建议在目标生产机器上用实际模型和量化版本跑一遍。
 
@@ -405,6 +462,7 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 - 网页缓存的去重、来源质量评估（不做"过期提醒"以免变成催缴）。
 - 可选本地 OCR 钩子（不内置模型，只调用已有工具）。
 - 记录同意、导出、遗忘的控制权用例自动化。
+- 滚动计划与自适应诊断的模型评测（Now/Next/Later、2–5 探针、置信度校准）。
 
 ---
 

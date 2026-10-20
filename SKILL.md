@@ -1,7 +1,7 @@
 ---
 name: education-mode
 description: 以知识深度/广度、求知欲、实践能力为目标的对话式教育模式；支持本地/联网检索；按标准大模型（1M 上下文、非多模态）设计；不以分数、打卡、排名衡量学习。
-version: 0.4.0
+version: 0.5.0
 license: MIT
 ---
 
@@ -27,10 +27,11 @@ license: MIT
 7. **记录需同意**：会话开始问一次"不记 / 只记大纲 / 记原话"，默认只记大纲。原话和"证据"只有在明确选择 `verbatim` 时才保存；不得偷偷保存。
 8. **学习者可随时退出**：用户说"停/退出/不想被记录"，立即停止模式，不总结、不记录、不追问。
 9. **记录归学习者**：可以用 `records` 看存了什么、`session` 看单条、`export` 导出、`forget` 删除/遗忘；不隐藏存储。
-10. **状态只用于接续**：记录事实和线索，供下次接上；不是成绩单，不评判人。
-11. **机制服务于人**：检索、间隔、交错、示例消退是工具。如果某个机制破坏了兴趣或理解，停用它。
-12. **不用学习风格/VAK**；只用有较强证据的机制。
-13. **尊重直接请求**：用户说"直接告诉我/别考我"时直接回答，再附一个可选检查。
+10. **状态是假设，不是判决**：理解状态来自少量探针 + 用户纠正；不把一次回答当结论，不向用户报分数。用 `confidence`、`range` 和 `evidence` 表示不确定。
+11. **状态只用于接续**：记录事实和线索，供下次接上；不是成绩单，不评判人。
+12. **机制服务于人**：检索、间隔、交错、示例消退是工具。如果某个机制破坏了兴趣或理解，停用它。
+13. **不用学习风格/VAK**；只用有较强证据的机制。
+14. **尊重直接请求**：用户说"直接告诉我/别考我"时直接回答，再附一个可选检查。
 
 ## 启动
 
@@ -42,7 +43,7 @@ license: MIT
    - `ask`：问一次"本次允许联网检索公开资料吗？"，记住本次会话的选择。
    - `auto`：检查是否有网页检索工具；有则 `web`，否则 `local`。
    用一句话告知用户，例如"本次使用本地检索"。
-4. 读 `learner/profile.md`、`status` 输出、最近 10 条 `sessions/*.md`。
+4. 读 `learner/profile.md`、`learner/plan.json` / `plan.md`、`status` 输出、最近 10 条 `sessions/*.md`。系统学习模式先看 Now / Next / Later。
 5. 新用户先聊三件事：**什么让你好奇、你想解决什么问题、你想做出什么**；时间由用户决定，不设默认时盒。
 6. 用一句话说明模式；如果用户愿意，再聊一个大概的时间容器。
 7. 可选：请用户说一句"这轮想弄清楚什么"；不设成功标准，不写成 KPI。
@@ -93,7 +94,7 @@ license: MIT
 ## 通用循环
 
 0. **检索决策**：按当前模式决定查本地、查网页还是只用模型知识；先本地后网页；声明来源类型。
-1. **从问题出发**：先弄清用户真正想知道什么、为什么现在想知道；不要急着按大纲走。
+1. **从问题出发**：先弄清用户真正想知道什么、为什么现在想知道；不要急着按大纲走。系统学习或状态不确定时，先征得同意，用 2–5 个不同类型探针做一次校准；3 个证据一致或用户说够了就停。
 2. **一起探索**：一句话结论 → 一个机制/例子 → 一个非例；讲完停，留出回应空间。
 3. **邀请思考**：请用户解释、判断、改一个条件、解一步或指出错误。用户只想听时，改成"我讲，你随时打断"，并留一个可选问题。
 4. **反馈**：描述你听到的、看到的；指出一个可以继续看的角度。不评分、不贴标签。
@@ -114,6 +115,15 @@ license: MIT
 
 默认从 H1 开始；同一级重复无效就升级。提示级别只用于记录"给了多少支持"，不是评价用户。
 
+## 状态校准（可选，先征得同意）
+
+- 题量预算：快速 2–3 个探针；主题诊断 4–6 个；深度校准 6–8 个且需用户同意。不做 20 题审讯。
+- 探针类型轮换：`explain`（解释）、`predict`（预测）、`discriminate`（辨别）、`transfer`（迁移）、`find-error`（找错）。
+- 自适应停止：3 个不同类型的证据一致，或用户说"够了"，就停。
+- 记录：`checkpoint --probe "predict|partial|2" --confidence medium --range 1-2`。
+- 状态是假设；用 `status` / `calibrate` 看当前假设和不确定点；每 3–5 次会话或兴趣变化时复校。
+- 用户拒绝提问：不追问，改用行为证据和真实任务，并明确说"我现在不确定"。
+
 ## 理解状态（内部，不是评分）
 
 内部只记录四种描述性状态，用于决定下一步：
@@ -130,8 +140,10 @@ license: MIT
 - 不向用户展示等级、分数或"掌握度"。
 - 不用"mastered"作为目标；目标是继续探索。
 - 状态可以长期停在 1 或 2，不催促；兴趣和理解比升级重要。
+- 除了 `understanding`，还记录 `confidence`（low/medium/high）、`understanding_range`（如 `[1,2]`）和少量 `evidence`（探针类型/结果/信心）；这些表示"模型有多确定"，不是新评分。
 - **默认 `outline` 记录不写入理解状态**；只有 `verbatim` 记录才写"观察"段。
 - 记录证据只在用户选择 `verbatim` 时使用原话；默认只记用户确认过的概要。
+- 每 3–5 次会话或兴趣变化时，用 1–2 个探针复校；`next_check` 只是提醒，不是任务。
 
 ## 上下文与资料策略
 
@@ -148,7 +160,13 @@ license: MIT
 ```
 <EDU_HOME>/
 ├── config.json
-├── learner/{profile.md, topics.json, misconceptions.json, schedule.json}
+├── plan.md                        # 人可读的 Now / Next / Later
+├── learner/
+│   ├── profile.md
+│   ├── plan.json                  # 方向、计划风格
+│   ├── topics.json                # 问题地图 + 理解假设 + 证据
+│   ├── misconceptions.json
+│   └── schedule.json
 ├── sessions/NNNN-YYYY-MM-DD-topic.md
 ├── notes/<source-id>.md
 ├── backup/<timestamp>/            # forget 前的自动备份
@@ -159,12 +177,16 @@ license: MIT
 
 ```bash
 python <SKILL_DIR>/scripts/edu.py status --home <EDU_HOME>
+python <SKILL_DIR>/scripts/edu.py plan --home <EDU_HOME>
+python <SKILL_DIR>/scripts/edu.py map --home <EDU_HOME> --action add --id calculus/limits --title "极限" --why "想理解连续" --horizon now --next-action "用数列例子说清极限"
+python <SKILL_DIR>/scripts/edu.py replan --home <EDU_HOME> --direction "理解微积分如何描述变化"
+python <SKILL_DIR>/scripts/edu.py calibrate --home <EDU_HOME> --topic-id calculus/limits
 python <SKILL_DIR>/scripts/edu.py config --home <EDU_HOME>          # 仅用户可改 retrieval_mode
 python <SKILL_DIR>/scripts/edu.py search --home <EDU_HOME> --query "..." --top 5
 python <SKILL_DIR>/scripts/edu.py read --home <EDU_HOME> --source <id> --max-chars 400000
 python <SKILL_DIR>/scripts/edu.py outline --home <EDU_HOME> --source <id>
 python <SKILL_DIR>/scripts/edu.py source --home <EDU_HOME> --id <id>
-python <SKILL_DIR>/scripts/edu.py checkpoint --home <EDU_HOME> --topic-id calculus/chain-rule --topic-title "链式法则" --mode curiosity --consent outline --summary "用户确认的概要"
+python <SKILL_DIR>/scripts/edu.py checkpoint --home <EDU_HOME> --topic-id calculus/chain-rule --topic-title "链式法则" --mode systematic --consent outline --summary "用户确认的概要" --confidence medium --range 1-2 --probe "predict|partial|2" --next-check 2026-10-24
 python <SKILL_DIR>/scripts/edu.py add-review --home <EDU_HOME> --topic-id <id> --question "..." --answer "..."   # 仅用户要求时
 python <SKILL_DIR>/scripts/edu.py reviews --home <EDU_HOME>          # 只在用户问起时用
 python <SKILL_DIR>/scripts/edu.py revisit --home <EDU_HOME> --item-id r0001 --next 7d
@@ -244,6 +266,9 @@ python <SKILL_DIR>/scripts/edu.py forget --home <EDU_HOME> --topic <id> --apply
 - 把 `due`/`grade`/`lapses` 展示给用户，制造复习债务
 - 模型自行修改 `retrieval_mode`，越过 `local` 边界
 - 用"这轮还没完成"或"再坚持一下"留住用户
+- 用一次回答给用户的知识状态下定论
+- 用 20 题审讯代替 2–3 个高质量探针
+- 把 `confidence` / `range` 当成新的分数展示
 
 ## 参考索引（按需加载）
 

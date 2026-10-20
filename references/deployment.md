@@ -98,6 +98,7 @@ python <SKILL_DIR>/scripts/edu.py validate --home <EDU_HOME>
 
 确认：
 
+- Python 3.12+；仅标准库，无第三方依赖；
 - `retrieval_mode` 与部署环境一致；只能由用户修改；
 - `context_window` 与实际模型一致（默认 1000000）；
 - `multimodal` 为 false；

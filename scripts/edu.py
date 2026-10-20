@@ -3,13 +3,17 @@
 """edu.py — local-first learning workspace CLI for the education-mode skill.
 
 Standard library only. The script itself never makes network requests.
-Python 3.8+.
+Python 3.12+.
 
 Commands:
   doctor      check the deployment environment and retrieval mode
   init        create a learning workspace
-  status      show learner state
+  status      show learner state, confidence, and recalibration hints
   config      show or change retrieval mode and model assumptions
+  plan        render the rolling plan (Now / Next / Later)
+  map         add, update, or drop plan nodes
+  replan      review and revise the direction and horizon
+  calibrate   show a short adaptive-diagnosis protocol for a topic
   ingest      index a local or cached web txt/md/epub/pdf source
   search      BM25 keyword search over indexed chunks
   source      show corpus metadata (including web URL / access date)
@@ -42,7 +46,15 @@ from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
+MIN_PYTHON = (3, 12)
+
+DEFAULT_PLAN = {
+    "version": 1,
+    "direction": "",
+    "style": "inquiry",
+    "updated": "",
+}
 
 DEFAULT_CONFIG = {
     "version": 2,
@@ -59,6 +71,10 @@ DEFAULT_CONFIG = {
 CONSENT_LEVELS = ("off", "outline", "verbatim")
 
 ALLOWED_RETRIEVAL = ("local", "web", "ask", "auto")
+HORIZONS = ("now", "next", "later")
+CONFIDENCE_LEVELS = ("low", "medium", "high")
+PROBE_TYPES = ("explain", "predict", "discriminate", "transfer", "find-error")
+PROBE_RESULTS = ("correct", "partial", "incorrect", "unclear")
 
 UNDERSTANDING_LABELS = {
     0: "刚接触",
@@ -216,6 +232,12 @@ def ensure_home(home: Path, lang: str = "auto") -> Path:
         if not path.exists():
             save_json(path, {"version": 1, "items": []})
 
+    plan_path = home / "learner" / "plan.json"
+    if not plan_path.exists():
+        plan = dict(DEFAULT_PLAN)
+        plan["updated"] = today_str()
+        save_json(plan_path, plan)
+
     return home
 
 
@@ -227,14 +249,34 @@ def load_items(home: Path, name: str) -> dict:
             if "understanding" not in item and "mastery" in item:
                 item["understanding"] = item.pop("mastery")
                 changed = True
-            if "understanding" in item:
-                try:
-                    level = max(0, min(3, int(item["understanding"])))
-                except (TypeError, ValueError):
-                    level = 0
-                if item["understanding"] != level:
-                    item["understanding"] = level
+            try:
+                level = max(0, min(3, int(item.get("understanding", 0))))
+            except (TypeError, ValueError):
+                level = 0
+            if item.get("understanding") != level:
+                item["understanding"] = level
+                changed = True
+
+            defaults = {
+                "confidence": "low",
+                "understanding_range": [max(0, level - 1), min(3, level + 1)],
+                "evidence": [],
+                "last_calibrated": None,
+                "next_check": None,
+                "why": "",
+                "horizon": "now",
+                "next_action": "",
+            }
+            for key, value in defaults.items():
+                if key not in item:
+                    item[key] = value
                     changed = True
+            if item.get("horizon") not in HORIZONS:
+                item["horizon"] = "now"
+                changed = True
+            if item.get("confidence") not in CONFIDENCE_LEVELS:
+                item["confidence"] = "low"
+                changed = True
         if changed:
             save_json(home / "learner" / name, data)
     return data
@@ -242,6 +284,42 @@ def load_items(home: Path, name: str) -> dict:
 
 def save_items(home: Path, name: str, data: dict) -> None:
     save_json(home / "learner" / name, data)
+
+
+def load_plan(home: Path) -> dict:
+    plan = load_json(home / "learner" / "plan.json", dict(DEFAULT_PLAN))
+    for key, value in DEFAULT_PLAN.items():
+        plan.setdefault(key, value)
+    if plan.get("style") not in ("inquiry", "project"):
+        plan["style"] = "inquiry"
+    return plan
+
+
+def save_plan(home: Path, plan: dict) -> None:
+    plan["updated"] = today_str()
+    save_json(home / "learner" / "plan.json", plan)
+
+
+def _new_topic(topic_id: str, title: str = "", why: str = "",
+               horizon: str = "now", next_action: str = "") -> dict:
+    return {
+        "id": topic_id,
+        "title": title or topic_id,
+        "prereqs": [],
+        "status": "learning",
+        "understanding": 0,
+        "confidence": "low",
+        "understanding_range": [0, 1],
+        "evidence": [],
+        "last_calibrated": None,
+        "next_check": None,
+        "why": why,
+        "horizon": horizon,
+        "next_action": next_action,
+        "sessions": 0,
+        "last_seen": today_str(),
+        "next_review": None,
+    }
 
 
 # ---------------------------------------------------------------- extraction
@@ -594,6 +672,7 @@ def cmd_status(args) -> int:
     config, _ = normalize_config(load_json(home / "config.json", DEFAULT_CONFIG))
     topics = load_items(home, "topics.json")["items"]
     misconceptions = load_items(home, "misconceptions.json")["items"]
+    plan = load_plan(home)
     open_mis = [item for item in misconceptions if item.get("status") == "open"]
     sessions = sorted((home / "sessions").glob("*.md"))
     corpus = [p for p in (home / "corpus").iterdir() if p.is_dir() and p.name != "inbox"]
@@ -602,6 +681,7 @@ def cmd_status(args) -> int:
         print_json({
             "home": str(home),
             "config": config,
+            "plan": plan,
             "topics": topics,
             "open_misconceptions": open_mis,
             "recent_sessions": [p.name for p in sessions[-5:]],
@@ -613,6 +693,7 @@ def cmd_status(args) -> int:
     print("retrieval: %s  (context %s, multimodal %s)" % (
         config.get("retrieval_mode"), config.get("context_window"), config.get("multimodal"),
     ))
+    print("direction: %s" % (plan.get("direction") or "-"))
     print("topics   : %d  (能应用 %d, 探索中 %d)" % (
         len(topics),
         sum(1 for t in topics if t.get("status") == "mastered"),
@@ -625,11 +706,16 @@ def cmd_status(args) -> int:
         print("\nTop topics:")
         for topic in topics[:8]:
             level = int(topic.get("understanding", topic.get("mastery", 0)) or 0)
-            print("  %-28s %-10s %-16s next=%s" % (
+            rng = topic.get("understanding_range") or [
+                max(0, level - 1), min(3, level + 1),
+            ]
+            print("  %-28s %-10s %-16s %-7s range=%s check=%s" % (
                 topic.get("id", "?"),
                 STATUS_LABELS.get(topic.get("status", ""), topic.get("status", "?")),
                 UNDERSTANDING_LABELS.get(level, str(level)),
-                topic.get("next_review") or "-",
+                topic.get("confidence", "low"),
+                "%s-%s" % (rng[0], rng[1]),
+                topic.get("next_check") or "-",
             ))
     if sessions:
         print("\nRecent sessions:")
@@ -984,6 +1070,48 @@ def cmd_revisit(args) -> int:
     return 0
 
 
+def parse_range(value: str):
+    parts = [part for part in re.split(r"[-~,.]+", value.strip()) if part]
+    if len(parts) != 2:
+        raise SystemExit("--range must look like 1-2")
+    try:
+        low, high = int(parts[0]), int(parts[1])
+    except ValueError:
+        raise SystemExit("--range must look like 1-2")
+    if not (0 <= low <= high <= 3):
+        raise SystemExit("--range must satisfy 0 <= low <= high <= 3")
+    return low, high
+
+
+def parse_probes(raw_entries):
+    probes = []
+    for raw in raw_entries:
+        parts = [part.strip() for part in raw.split("|")]
+        if len(parts) < 2:
+            raise SystemExit('--probe format: "type | result | confidence"')
+        probe_type = parts[0]
+        result = parts[1]
+        if probe_type not in PROBE_TYPES:
+            raise SystemExit("probe type must be one of %s" % (PROBE_TYPES,))
+        if result not in PROBE_RESULTS:
+            raise SystemExit("probe result must be one of %s" % (PROBE_RESULTS,))
+        confidence = 2
+        if len(parts) > 2 and parts[2]:
+            try:
+                confidence = int(parts[2])
+            except ValueError:
+                raise SystemExit("probe confidence must be 1, 2, or 3")
+        if confidence not in (1, 2, 3):
+            raise SystemExit("probe confidence must be 1, 2, or 3")
+        probes.append({
+            "date": today_str(),
+            "type": probe_type,
+            "result": result,
+            "confidence": confidence,
+        })
+    return probes
+
+
 def _next_session_number(home: Path) -> int:
     highest = 0
     for path in (home / "sessions").glob("*.md"):
@@ -1045,16 +1173,7 @@ def cmd_checkpoint(args) -> int:
     topics = load_items(home, "topics.json")
     topic = next((entry for entry in topics["items"] if entry.get("id") == topic_id), None)
     if topic is None:
-        topic = {
-            "id": topic_id,
-            "title": args.topic_title or topic_id,
-            "prereqs": [],
-            "status": "learning",
-            "understanding": 0,
-            "sessions": 0,
-            "last_seen": today_str(),
-            "next_review": None,
-        }
+        topic = _new_topic(topic_id, args.topic_title or topic_id)
         topics["items"].append(topic)
 
     topic["sessions"] = int(topic.get("sessions", 0)) + 1
@@ -1064,6 +1183,20 @@ def cmd_checkpoint(args) -> int:
     level = args.understanding if args.understanding is not None else args.mastery
     if level is not None:
         topic["understanding"] = max(0, min(3, level))
+    if args.confidence:
+        topic["confidence"] = args.confidence
+    if args.range:
+        low, high = parse_range(args.range)
+        topic["understanding_range"] = [low, high]
+    probes = parse_probes(args.probe)
+    if probes:
+        topic["evidence"] = (topic.get("evidence") or []) + probes
+        topic["last_calibrated"] = today_str()
+        if not args.next_check:
+            topic["next_check"] = (today() + timedelta(days=3)).isoformat()
+    if args.next_check:
+        parse_date(args.next_check)
+        topic["next_check"] = args.next_check
     if args.status:
         topic["status"] = args.status
     if args.next_review:
@@ -1135,10 +1268,157 @@ def cmd_checkpoint(args) -> int:
     if args.next_review:
         lines.extend(["## 可选复习", "", "- suggested: %s" % args.next_review, ""])
     path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
+    _write_plan(home)
 
     print("session written: %s (consent=%s)" % (path, consent))
     if created:
         print("misconceptions: %s" % ", ".join(entry["id"] for entry in created))
+    return 0
+
+
+def _plan_lines(home: Path):
+    plan = load_plan(home)
+    topics = load_items(home, "topics.json")["items"]
+    style_label = "项目型" if plan.get("style") == "project" else "探究型"
+    lines = [
+        "# Learning Plan",
+        "",
+        "- 方向：%s" % (plan.get("direction") or "（还没定；可以随时改）"),
+        "- 风格：%s" % style_label,
+        "- 更新：%s" % (plan.get("updated") or "-"),
+        "",
+    ]
+    for horizon, label in (("now", "Now"), ("next", "Next"), ("later", "Later")):
+        group = [topic for topic in topics if topic.get("horizon") == horizon]
+        lines.append("## %s" % label)
+        if not group:
+            lines.append("- （空）")
+        else:
+            for topic in group:
+                lines.append("- %s — %s" % (
+                    topic.get("id", "?"), topic.get("title") or topic.get("id", "?"),
+                ))
+                if topic.get("why"):
+                    lines.append("  - why: %s" % topic["why"])
+                if topic.get("next_action"):
+                    lines.append("  - next: %s" % topic["next_action"])
+        lines.append("")
+    unplaced = [topic for topic in topics if topic.get("horizon") not in HORIZONS]
+    if unplaced:
+        lines.append("## Unplaced")
+        for topic in unplaced:
+            lines.append("- %s — %s" % (topic.get("id", "?"), topic.get("title") or "?"))
+        lines.append("")
+    return lines
+
+
+def _write_plan(home: Path) -> Path:
+    path = home / "plan.md"
+    path.write_text("\n".join(_plan_lines(home)) + "\n", encoding="utf-8")
+    return path
+
+
+def cmd_plan(args) -> int:
+    home = ensure_home(workspace(args))
+    path = _write_plan(home)
+    print("plan: %s" % path)
+    print(path.read_text(encoding="utf-8"))
+    return 0
+
+
+def cmd_map(args) -> int:
+    home = ensure_home(workspace(args))
+    topics = load_items(home, "topics.json")
+    topic = next((entry for entry in topics["items"] if entry.get("id") == args.id), None)
+
+    if args.action == "add":
+        if topic is not None:
+            raise SystemExit("Topic already exists: %s" % args.id)
+        topic = _new_topic(args.id, args.title or args.id,
+                           why=args.why or "",
+                           horizon=args.horizon or "now",
+                           next_action=args.next_action or "")
+        topic["prereqs"] = list(dict.fromkeys(args.prereq or []))
+        topics["items"].append(topic)
+        message = "added %s (%s)" % (topic["id"], topic["horizon"])
+    elif args.action == "update":
+        if topic is None:
+            raise SystemExit("Topic not found: %s" % args.id)
+        if args.title:
+            topic["title"] = args.title
+        if args.why is not None:
+            topic["why"] = args.why
+        if args.horizon:
+            topic["horizon"] = args.horizon
+        if args.next_action is not None:
+            topic["next_action"] = args.next_action
+        if args.prereq:
+            topic["prereqs"] = list(dict.fromkeys(
+                (topic.get("prereqs") or []) + args.prereq
+            ))
+        message = "updated %s" % topic["id"]
+    else:
+        if topic is None:
+            raise SystemExit("Topic not found: %s" % args.id)
+        topics["items"] = [entry for entry in topics["items"] if entry.get("id") != args.id]
+        for name in ("misconceptions.json", "schedule.json"):
+            store = load_items(home, name)
+            store["items"] = [
+                item for item in store.get("items", [])
+                if item.get("topic_id") != args.id
+            ]
+            save_items(home, name, store)
+        message = "dropped %s from the plan (session history kept)" % args.id
+
+    save_items(home, "topics.json", topics)
+    path = _write_plan(home)
+    print("%s; plan: %s" % (message, path))
+    return 0
+
+
+def cmd_replan(args) -> int:
+    home = ensure_home(workspace(args))
+    plan = load_plan(home)
+    if args.direction is not None:
+        plan["direction"] = args.direction
+    if args.style:
+        plan["style"] = args.style
+    save_plan(home, plan)
+    path = _write_plan(home)
+    print(path.read_text(encoding="utf-8"))
+    print("## 5 分钟复盘")
+    print("1. 大方向还成立吗？")
+    print("2. 现在最想推进哪个？")
+    print("3. 哪个可以丢？")
+    print("4. 下一个最小动作是什么？")
+    print("")
+    print("改完方向可用 `replan --direction \"...\"`；调整节点用 `map`。")
+    return 0
+
+
+def cmd_calibrate(args) -> int:
+    home = ensure_home(workspace(args))
+    topics = load_items(home, "topics.json")["items"]
+    topic = next((entry for entry in topics if entry.get("id") == args.topic_id), None)
+    if topic is None:
+        raise SystemExit("Topic not found: %s" % args.topic_id)
+    level = int(topic.get("understanding", 0) or 0)
+    confidence = topic.get("confidence", "low")
+    rng = topic.get("understanding_range") or [max(0, level - 1), min(3, level + 1)]
+    evidence = topic.get("evidence") or []
+    print("topic: %s — %s" % (topic.get("id"), topic.get("title") or ""))
+    print("当前假设: %s（confidence=%s, range=%s-%s）" % (
+        UNDERSTANDING_LABELS.get(level, str(level)), confidence, rng[0], rng[1],
+    ))
+    print("上次校准: %s" % (topic.get("last_calibrated") or "未记录"))
+    print("已有证据: %d 条" % len(evidence))
+    print("")
+    print("先征得同意，再选 2–3 个不同类型的探针：")
+    print("1. explain: 用自己的话解释核心概念。")
+    print("2. predict: 改一个条件，会发生什么？")
+    print("3. discriminate / transfer / find-error: 选一个换场景、辨别或找错的问题。")
+    print("停止：3 个不同类型证据一致，或用户说够了。")
+    print("记录：checkpoint --probe \"predict|partial|2\" --confidence medium --range 1-2")
     return 0
 
 
@@ -1215,7 +1495,7 @@ def cmd_export(args) -> int:
         target.mkdir(parents=True, exist_ok=True)
         archive = target / ("edu-export-%s.zip" % today_str())
 
-    entries = ["config.json", "learner", "sessions", "notes"]
+    entries = ["config.json", "plan.md", "learner", "sessions", "notes"]
     if args.include_corpus:
         entries.append("corpus")
     with zipfile.ZipFile(str(archive), "w", zipfile.ZIP_DEFLATED) as zf:
@@ -1272,6 +1552,9 @@ def cmd_forget(args) -> int:
 
     if args.all:
         actions.append("remove all learner profile, topics, misconceptions, and reviews")
+        actions.append("reset direction and plan")
+        if (home / "plan.md").exists():
+            actions.append("delete plan.md")
         actions.extend("delete session %s" % path.name for path in sessions)
         for path in sorted((home / "notes").glob("*.md")):
             actions.append("delete note %s" % path.name)
@@ -1304,6 +1587,7 @@ def cmd_forget(args) -> int:
         for path in sessions:
             if _session_meta(path)["topic"] == args.topic:
                 path.unlink()
+        _write_plan(home)
     else:
         for path in sessions:
             path.unlink()
@@ -1312,8 +1596,12 @@ def cmd_forget(args) -> int:
         profile = home / "learner" / "profile.md"
         if profile.exists():
             profile.unlink()
+        plan_md = home / "plan.md"
+        if plan_md.exists():
+            plan_md.unlink()
         for name in ("topics.json", "misconceptions.json", "schedule.json"):
             save_items(home, name, {"version": 1, "items": []})
+        save_plan(home, dict(DEFAULT_PLAN))
 
     print("done.")
     return 0
@@ -1332,6 +1620,10 @@ def cmd_validate(args) -> int:
     if config.get("multimodal"):
         warnings.append("multimodal is true, but this skill is designed for non-multimodal models")
 
+    plan = load_plan(home)
+    if plan.get("style") not in ("inquiry", "project"):
+        errors.append("plan style must be inquiry or project")
+
     seen_topics = set()
     for topic in load_items(home, "topics.json")["items"]:
         missing = [key for key in ("id", "status", "understanding") if key not in topic]
@@ -1344,6 +1636,32 @@ def cmd_validate(args) -> int:
             warnings.append("unknown topic status: %r" % topic.get("status"))
         if not isinstance(topic.get("understanding"), int) or not 0 <= topic.get("understanding", 0) <= 3:
             errors.append("topic understanding out of range: %r" % topic)
+        if topic.get("horizon") not in HORIZONS:
+            errors.append("topic horizon must be now/next/later: %r" % topic.get("horizon"))
+        if topic.get("confidence") not in CONFIDENCE_LEVELS:
+            errors.append("topic confidence must be low/medium/high: %r" % topic.get("confidence"))
+        rng = topic.get("understanding_range")
+        if not (
+            isinstance(rng, list) and len(rng) == 2
+            and all(isinstance(value, int) for value in rng)
+            and 0 <= rng[0] <= rng[1] <= 3
+        ):
+            errors.append("topic understanding_range must be [low, high]: %r" % rng)
+        for probe in topic.get("evidence", []):
+            if not isinstance(probe, dict):
+                errors.append("probe evidence must be an object: %r" % probe)
+                continue
+            if probe.get("type") not in PROBE_TYPES:
+                errors.append("unknown probe type: %r" % probe.get("type"))
+            if probe.get("result") not in PROBE_RESULTS:
+                errors.append("unknown probe result: %r" % probe.get("result"))
+        if topic.get("next_check"):
+            try:
+                parse_date(topic["next_check"])
+            except SystemExit:
+                errors.append("bad next_check on %s: %r" % (
+                    topic.get("id"), topic.get("next_check"),
+                ))
 
     seen_mis = set()
     for item in load_items(home, "misconceptions.json")["items"]:
@@ -1438,6 +1756,32 @@ def build_parser() -> argparse.ArgumentParser:
     add_home(p)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("plan", help="render the rolling plan (Now / Next / Later)")
+    add_home(p)
+    p.set_defaults(func=cmd_plan)
+
+    p = sub.add_parser("map", help="add, update, or drop plan nodes")
+    add_home(p)
+    p.add_argument("--action", required=True, choices=("add", "update", "drop"))
+    p.add_argument("--id", required=True)
+    p.add_argument("--title", default=None)
+    p.add_argument("--why", default=None)
+    p.add_argument("--horizon", default=None, choices=HORIZONS)
+    p.add_argument("--next-action", default=None)
+    p.add_argument("--prereq", action="append", default=[])
+    p.set_defaults(func=cmd_map)
+
+    p = sub.add_parser("replan", help="review and revise direction and horizon")
+    add_home(p)
+    p.add_argument("--direction", default=None)
+    p.add_argument("--style", default=None, choices=("inquiry", "project"))
+    p.set_defaults(func=cmd_replan)
+
+    p = sub.add_parser("calibrate", help="show an adaptive diagnosis protocol")
+    add_home(p)
+    p.add_argument("--topic-id", required=True)
+    p.set_defaults(func=cmd_calibrate)
 
     p = sub.add_parser("config", help="show or change configuration")
     add_home(p)
@@ -1536,6 +1880,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--next", default=None)
     p.add_argument("--understanding", type=int, default=None, choices=(0, 1, 2, 3))
     p.add_argument("--mastery", type=int, default=None, help=argparse.SUPPRESS)
+    p.add_argument("--confidence", default=None, choices=CONFIDENCE_LEVELS)
+    p.add_argument("--range", default=None, help="understanding range, e.g. 1-2")
+    p.add_argument("--probe", action="append", default=[],
+                   help='format: "explain|predict|discriminate|transfer|find-error | correct|partial|incorrect|unclear | 1-3"')
+    p.add_argument("--next-check", default=None, help="YYYY-MM-DD for the next calibration")
     p.add_argument("--status", default=None,
                    choices=("new", "learning", "review", "mastered"),
                    help=argparse.SUPPRESS)
@@ -1577,6 +1926,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
+    if sys.version_info < MIN_PYTHON:
+        raise SystemExit(
+            "Python %s+ required; found %s. Use Python 3.12 or newer."
+            % (".".join(map(str, MIN_PYTHON)), sys.version.split()[0])
+        )
     try:
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")

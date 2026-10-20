@@ -5,8 +5,10 @@
 ```
 <EDU_HOME>/
 ├── config.json
+├── plan.md                        # 人可读的 Now / Next / Later
 ├── learner/
 │   ├── profile.md
+│   ├── plan.json                  # 方向、计划风格
 │   ├── topics.json
 │   ├── misconceptions.json
 │   └── schedule.json
@@ -30,6 +32,8 @@
 |---|---|---|
 | `config.json` | 用户；模型只能提示用户手动执行 `config --set retrieval_mode` | 模型不得自行改检索模式 |
 | `learner/profile.md` | 模型/用户 | 可编辑；默认不保存原话 |
+| `learner/plan.json` | `edu.py` | 方向与计划风格；模型不手改 |
+| `plan.md` | `edu.py` | 由 `plan` / `map` / `replan` 生成，不手改 |
 | `learner/topics.json` | `edu.py` | 模型不手改 |
 | `learner/misconceptions.json` | `edu.py` | 模型不手改 |
 | `learner/schedule.json` | `edu.py` | 模型不手改 |
@@ -67,6 +71,21 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
 
 旧版 `allow_network` 会被自动迁移：`false → local`，`true → web`。迁移后不再使用该字段。
 
+## learner/plan.json
+
+```json
+{
+  "version": 1,
+  "direction": "理解微积分如何描述变化与累积",
+  "style": "inquiry",
+  "updated": "2026-10-20"
+}
+```
+
+- `direction`：可修改的大方向；空值合法。
+- `style`：`inquiry`（探究型）或 `project`（项目型）。
+- `plan.md` 由 `plan` / `map` / `replan` 生成；不要手改 JSON。
+
 ## corpus/meta.json
 
 ```json
@@ -95,14 +114,24 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
   "version": 1,
   "items": [
     {
-      "id": "calculus/chain-rule",
-      "title": "链式法则",
-      "prereqs": ["calculus/derivative"],
+      "id": "calculus/limits",
+      "title": "极限",
+      "prereqs": [],
       "status": "learning",
       "understanding": 2,
+      "confidence": "medium",
+      "understanding_range": [1, 2],
+      "evidence": [
+        {"date": "2026-10-20", "type": "predict", "result": "partial", "confidence": 2}
+      ],
+      "last_calibrated": "2026-10-20",
+      "next_check": "2026-10-24",
+      "why": "想理解连续与逼近",
+      "horizon": "now",
+      "next_action": "用数列例子说清极限",
       "sessions": 1,
       "last_seen": "2026-10-20",
-      "next_review": "2026-10-23"
+      "next_review": null
     }
   ]
 }
@@ -110,6 +139,13 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
 
 - `status`: `new` | `learning` | `review` | `mastered`（仅内部使用，不向用户展示等级）
 - `understanding`: 0–3，描述性状态：0 刚接触 / 1 能复述 / 2 能解释或应用 / 3 能迁移或创造
+- `confidence`: `low` | `medium` | `high`，表示模型对这个判断有多确定。
+- `understanding_range`: `[low, high]`，表示可能区间；不是分数。
+- `evidence`: 少量探针记录，字段为 `date` / `type` / `result` / `confidence`。
+- `last_calibrated` / `next_check`: 上次校准与下次建议复校日期；`next_check` 只是提醒。
+- `why`: 节点与大方向的关系。
+- `horizon`: `now` | `next` | `later`。
+- `next_action`: 这个节点当前最小的下一步。
 - **默认 `outline` 会话记录不写入理解状态**；该字段只用于内部接续。
 - `id`: 稳定的 `领域/主题`，小写，空格用 `-`
 - 旧字段 `mastery` 会自动迁移为 `understanding`；不要手改 JSON
@@ -164,6 +200,17 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
 - `active: false` 表示学习者暂停了这条；`reviews` 默认不列出。
 - `grade` / `lapses` / `ease` 只作为内部建议参数，不向用户展示。
 - 复习由学习者发起；不显示"到期数量""逾期"。
+
+## 滚动计划
+
+| 命令 | 作用 |
+|---|---|
+| `plan` | 从 `plan.json` + `topics.json` 生成 `plan.md`，显示 Now / Next / Later |
+| `map --action add/update/drop` | 学习者增删改节点；模型只建议 |
+| `replan` | 复盘方向与视野；可更新 `direction` / `style` |
+| `calibrate --topic-id` | 查看当前假设、置信度、证据，并给出 2–3 个探针的建议 |
+
+`plan.md` 不显示完成率、覆盖率或理解等级；它只显示方向、节点、why 和 next action。
 
 ## 会话记录
 
