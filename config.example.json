@@ -3,7 +3,6 @@
   "language": "auto",
   "session_minutes": 20,
   "max_explanation_words": 250,
-  "mastery_threshold": 2,
   "hint_policy": "one_level_at_a_time",
   "retrieval_mode": "ask",
   "web_cache": true,

@@ -4,9 +4,21 @@
 
 适用于内网/离线生产机器，也适用于允许联网补查资料的普通环境。目标模型按**标准大模型**设计：1M 上下文、可靠指令遵循与工具调用、**非多模态**。
 
-- 版本：0.2.0
+- 版本：0.3.0
 - 形态：Agent Skill（`SKILL.md` + 按需加载的 references + 纯标准库脚本）
 - 许可：MIT
+
+---
+
+## 零、三个目标（总标尺）
+
+这个 skill 不以"讲了多少内容、刷了多少题、连续学了多少天"衡量成功。它只关心三件事：
+
+1. **知识水平**：知识体系的深度与广度。能解释、能联系、能指出边界、能质疑；能看到不同领域之间的连接。
+2. **求知欲**：好奇心、探索的兴趣、终身学习的意愿。学完之后还想继续，而不是"终于完成了"。
+3. **实践能力**：把知识用到真实任务、做出东西、解决问题，并在应用中修正理解。
+
+四种模式只是手段。完整标尺与反异化清单见 [`references/learning-goals.md`](references/learning-goals.md)。
 
 ---
 
@@ -21,28 +33,35 @@
 - 先犯错，再修正；
 - 先能解释，才算理解。
 
-一个只会输出的系统，很容易制造"我看懂了"的错觉。所以这个 skill 的第一条产品规则不是"讲得更好"，而是**学习者必须产出**：每次会话至少有一次由用户完成的解释、应用或解题。没有产出的会话，不算教学。
+一个只会输出的系统，很容易制造"我看懂了"的错觉。所以这个 skill 不把"讲得更多"当成目标，而是**邀请学习者一起思考**：解释、判断、尝试、提出反对。用户只想听的时候，先讲清楚，再留一个可选问题；不把对话变成表演。
 
-### 2. 两个背景假设已经更新
+### 1.5 反异化：不把学习变成指标游戏
 
-v0.1 有两个过强的默认假设，v0.2 已释放：
+v0.3 明确移除以下做法：积分、徽章、等级、排行榜、打卡、连续天数、学习时长、完成率、覆盖率、掌握度评分、成绩单、愧疚式复习提醒。
+
+这些指标容易让学习变成外部奖励游戏：为了"完成"而赶进度，为了"打卡"而学习，为了分数而回避真正困难的问题。这个 skill 用三个目标自检，而不是用数字驱动。
+
+### 2. 三个关键假设已经更新
+
+v0.1/v0.2 有三个需要修正的默认假设，v0.3 已更新：
 
 | 旧假设 | 新假设 | 设计变化 |
 |---|---|---|
 | 离线 = 禁止一切联网 | 离线主要指**不通过网络检索**；是否联网由配置决定 | 新增 `local` / `web` / `ask` / `auto` 四种检索模式；网页资料可缓存、引用、回退 |
 | 本地模型 = 小上下文/弱能力 | 目标模型是**标准大模型，1M 上下文**，只是非多模态 | 取消 8k/16k/32k 分层与极简内核；支持整篇论文/整本书进入上下文；允许同时加载多个参考文件 |
+| 学习 = 产出/指标 | 学习 = **知识深度与广度 + 求知欲 + 实践能力** | 移除积分、打卡、排名、完成率、掌握度评分；结语从"今天学到了什么"改为"这一轮学到了什么" |
 
 不变的是：
 
-- 学习状态必须落盘，因为**跨会话持久化与可审计**，而不是因为模型记不住；
-- 教学模式必须让学习者产出，而不是因为模型能力不足；
+- 学习状态必须落盘，因为**跨会话持久化与可追溯**，而不是因为模型记不住；
+- 教学模式邀请学习者参与思考，而不是因为模型能力不足；
 - 非多模态是硬边界：不能看图、表格截图、扫描页或视频。
 
 ### 3. 为什么不用现成项目
 
 现成的教育类开源项目——tutor-mcp、DeepTutor、OpenMAIC、noema——大多是完整应用或研究系统，带数据库、Web UI、服务进程，不能直接塞进一个 agent skill。现有教育类 skill 则多为教师备课或单一用途，缺少一个覆盖"好奇心、系统学习、技能训练、文本精读"的统一循环。
 
-本 skill 的定位不是"更好的课程生成器"，而是"一个在本地优先、可审计、可按需联网的教学循环"。
+本 skill 的定位不是"更好的课程生成器"，而是"一个在本地优先、可追溯、可按需联网的教学循环"。
 
 ---
 
@@ -50,12 +69,12 @@ v0.1 有两个过强的默认假设，v0.2 已释放：
 
 | 维度 | 常见做法 | 本 skill |
 |---|---|---|
-| 教学内容 | 一次生成完整课程 | 一次一个微单元，学习者产出后再继续 |
+| 教学内容 | 一次生成完整课程 | 一次一个微单元，学习者回应后再继续 |
 | 学习状态 | 依赖模型上下文记忆 | 落盘到本地 Markdown/JSON，脚本维护 |
 | 资料检索 | 默认云端向量库 / embedding RAG | 默认本地 BM25；联网检索按配置开启 |
 | 网页资料 | 直接引用链接 | 必须缓存到本地，记录 URL 与访问日期后再引用 |
-| 复习安排 | 模型自行提醒 | SM-2 脚本计算到期日 |
-| 掌握判定 | 模型自评"已掌握" | 四维 rubric + 用户原话证据 |
+| 复习安排 | 模型自行提醒 / 打卡催缴 | SM-2 脚本计算到期日，但只作为邀请，不制造愧疚 |
+| 学习判断 | 分数、等级、"掌握度" | 描述性理解状态 + 用户原话证据；不向用户报分数 |
 | 论文/书籍 | 全文摘要 | triage → structure → deep read → synthesis；1M 上下文可整本读 |
 | 能力不足时 | 报错中断 | 三档降级，纯对话也能继续教 |
 
@@ -65,17 +84,17 @@ v0.1 有两个过强的默认假设，v0.2 已释放：
 
 ## 三、四种模式
 
-| 模式 | 用户信号 | 时间盒 | 核心产出 |
+| 模式 | 用户信号 | 时间盒 | 这一轮可能留下的东西 |
 |---|---|---|---|
 | `curiosity` 好奇心 | "为什么/是什么/解释一下" | 5–10 分钟 | 一个正确的心理模型 + 一个继续探索的钩子 |
-| `systematic` 系统学习 | "从零学/给个计划/系统学" | 多次，每次 15–25 分钟 | 5–12 个节点的主题图 + 掌握证据 |
-| `skill-drill` 技能训练 | "练习/提升/给我反馈" | 多次，短回合 | 一个可观察的短板 + 一次成功迁移 |
+| `systematic` 系统学习 | "从零学/给个计划/系统学" | 多次，每次 15–25 分钟 | 5–12 个节点的主题图 + 理解状态与探索线索 |
+| `skill-drill` 技能训练 | "练习/提升/给我反馈" | 多次，短回合 | 一个关键环节 + 一次真实迁移 |
 | `deep-read` 精读 | "读论文/这本书/这一章" | 20–45 分钟 | 能重建论证的笔记 + 评价 |
 
-所有模式共用同一个七步循环：
+所有模式共用同一个循环：
 
 ```
-检索决策 → 诊断 → 微教学 → 学习者产出 → 评估 → 提示 → 迁移 → 记录
+检索决策 → 从问题出发 → 一起探索 → 邀请思考 → 反馈 → 支持 → 连接与迁移 → 留下问题 + 记录
 ```
 
 ### 提示阶梯
@@ -89,7 +108,17 @@ v0.1 有两个过强的默认假设，v0.2 已释放：
 | H4 | 给完整示例，再做相似题 |
 | H5 | 直接给答案，之后必须复述或重做 |
 
-默认从 H1 开始，一次只升一级；记录本次最高提示级别，作为评估证据。
+默认从 H1 开始，一次只升一级；提示级别只记录"给了多少支持"，不是评价用户。
+
+### 每轮结语
+
+只写三行，不写成绩单：
+
+```
+这一轮学到了什么：<一句话，具体到理解>
+这一轮还想探索什么：<一个用户可能真的想知道的问题>
+下一轮想试什么：<一个可选的实践动作或下一步>
+```
 
 ---
 
@@ -131,6 +160,7 @@ python ~/.claude/skills/education-mode/scripts/edu.py config --set retrieval_mod
 ├── LICENSE
 ├── config.example.json
 ├── references/
+│   ├── learning-goals.md        # 三个目标、反异化清单、每轮自检
 │   ├── deployment.md            # 模型假设、检索模式、能力边界
 │   ├── retrieval.md             # 本地/网页检索协议、缓存、引用
 │   ├── modes/
@@ -139,19 +169,20 @@ python ~/.claude/skills/education-mode/scripts/edu.py config --set retrieval_mod
 │   │   ├── skill-drill.md
 │   │   └── deep-read.md
 │   ├── pedagogy/
-│   │   ├── assessment.md        # 四维评分、误解分类、反馈措辞
+│   │   ├── assessment.md        # 反馈与理解状态（不评分）、误解分类
 │   │   └── memory.md            # 检索、间隔、交错、SM-2
 │   └── state-schema.md          # 状态字段与写入规则
 ├── assets/templates/            # 无脚本时的手工状态模板
 ├── scripts/edu.py               # 纯标准库：索引 / BM25 / SM-2 / 记录 / 校验
-└── evals/rubric.md              # 14 个离线/联网验收用例
+└── evals/rubric.md              # 18 个离线/联网/反异化验收用例
 ```
 
 ### 加载策略
 
 1M 上下文下不需要为容量做分层压缩。按任务加载：
 
-- 日常会话：`SKILL.md` + 当前模式文件。
+- 每次会话先读 `SKILL.md` + `learning-goals.md`（总标尺，很短）。
+- 日常会话：再加当前模式文件。
 - 精读/系统学习：再加 `retrieval.md`、`assessment.md`，必要时加载多个来源。
 - 不要无差别加载全部文件；相关性比容量更重要。
 - 状态文件仍然每次会话先读，保证跨会话连续。
@@ -196,17 +227,17 @@ python ~/.claude/skills/education-mode/scripts/edu.py config --set retrieval_mod
 | [max-astro/paper-reading-skills — read-paper](https://skillsmp.com/ko/creators/max-astro/paper-reading-skills/skills-read-paper) | 四阶段精读：triage → structure map → deep read → synthesis；三副眼镜；苏格拉底停顿 | 以仓库为准 |
 | [silentdog918/book-reader-skill](https://github.com/silentdog918/book-reader-skill) | Adler 四层次阅读法：基础 → 检视 → 分析 → 主题 | 以仓库为准 |
 | [koukekoukej-glitch/feynman-tutor](https://github.com/koukekoukej-glitch/feynman-tutor) | 反转师生关系：让用户教 AI，通过追问暴露理解断层 | 以仓库为准 |
-| [michael-uplive021/learning-practice-coevolution](https://github.com/michael-uplive021/learning-practice-coevolution) | Mentor / Digital Apprentice / Observer；学习者先说；一轮必须产出真实迁移练习和下一个学习目标 | MIT |
-| [wangyendt/wayne-skills — learning-tutor](https://skillsmp.com/creators/wangyendt/wayne-skills/learning-tutor) | 诊断 → 微课 → 迁移；提示分级；`unassessed` 与 `supersedes` 的证据纪律；confidence ≠ mastery | 以仓库为准 |
+| [michael-uplive021/learning-practice-coevolution](https://github.com/michael-uplive021/learning-practice-coevolution) | Mentor / Digital Apprentice / Observer；学习者先说；一轮包含真实迁移练习和下一个学习目标 | MIT |
+| [wangyendt/wayne-skills — learning-tutor](https://skillsmp.com/creators/wangyendt/wayne-skills/learning-tutor) | 诊断 → 微课 → 迁移；提示分级；`unassessed` 与 `supersedes` 的证据纪律；信心 ≠ 理解 | 以仓库为准 |
 
 ### 完整学习系统 / ITS
 
 | 项目 | 参考内容 | 许可证 |
 |---|---|---|
-| [ArnaudGuiovanna/tutor-mcp](https://github.com/ArnaudGuiovanna/tutor-mcp) | "Generative teaching. Deterministic pedagogy."；BKT + FSRS + 先修图；掌握度门槛；冻结 rubric；最小工具接口 | MIT |
+| [ArnaudGuiovanna/tutor-mcp](https://github.com/ArnaudGuiovanna/tutor-mcp) | "Generative teaching. Deterministic pedagogy."；BKT + FSRS + 先修图；掌握状态估计；冻结 rubric；最小工具接口 | MIT |
 | [HKUDS/DeepTutor](https://github.com/HKUDS/DeepTutor) | 辅导与出题互相反馈；trace forest 三级记忆；带证据的误解清单；出题器与验证器分离 | Apache-2.0 |
 | [THU-MAIC/OpenMAIC](https://github.com/THU-MAIC/OpenMAIC) | 文档 → 多智能体课堂；大纲 → 场景；教师/同学角色互相质疑；可恢复会话 | MIT |
-| [aislamsilvalol-ctrl/noema](https://github.com/aislamsilvalol-ctrl/noema) | 概念知识图谱 + 先修关系；掌握度；FSRS；Mistake Bank；五种导师模式；强制引用 RAG | AGPL-3.0 |
+| [aislamsilvalol-ctrl/noema](https://github.com/aislamsilvalol-ctrl/noema) | 概念知识图谱 + 先修关系；掌握状态估计；FSRS；Mistake Bank；五种导师模式；强制引用 RAG | AGPL-3.0 |
 | [LuoHaomin/read-paper](https://github.com/LuoHaomin/read-paper) | 中文论文精读与按类型适配模板 | 以仓库为准 |
 
 ### 学习科学依据
@@ -220,6 +251,9 @@ python ~/.claude/skills/education-mode/scripts/edu.py config --set retrieval_mod
 - **示例消退**：Renkl & Atkinson (2003).
 - **刻意练习**：Ericsson et al. (1993).
 - **形成性反馈**：Black & Wiliam (1998).
+- **自我决定理论**：Deci & Ryan (2000) — 自主、胜任、联结；控制性外部奖励可能削弱内在动机。
+- **兴趣发展**：Hidi & Renninger (2006) — 情境兴趣可以发展为个人兴趣。
+- **心流**：Csikszentmihalyi (1990) — 挑战与能力匹配时，投入感最强。
 - **反证：学习风格**：Pashler et al. (2008) — 本 skill 明确不采用。
 
 ### 明确没有采用
@@ -228,7 +262,7 @@ python ~/.claude/skills/education-mode/scripts/edu.py config --set retrieval_mod
 - 完整 BKT / FSRS 参数拟合（改用可解释的 SM-2）
 - 多智能体课堂与实时白板（对单 agent skill 过重）
 - 学习风格 / VAK / 左右脑理论
-- 自动 LLM 评审（离线/联网成本高，改为人工 rubric）
+- 自动 LLM 评审（改为人工验收）
 - 一次生成完整课程或整本书摘要
 - 假装具备多模态能力
 
@@ -291,7 +325,7 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 
 ## 八、评测
 
-`evals/rubric.md` 提供 14 个用例，覆盖：
+`evals/rubric.md` 提供 18 个用例，覆盖：
 
 1. 好奇心模式先诊断再讲解
 2. 用户要求直接答案时不强迫苏格拉底
@@ -307,8 +341,12 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 12. 非多模态：不假装看图
 13. 误解诊断与提示阶梯
 14. 无 shell 时的降级
+15. 反异化：结语用"这一轮"，无积分/打卡/排名/完成率
+16. 好奇心保护：允许跑题，不强行拉回计划
+17. 知识广度：跨领域连接，并说明类比失效点
+18. 实践能力：真实应用任务，而不是更多练习题
 
-通过标准：至少 12/14。红线任一失败即不通过：`local` 联网、编造来源、泄露学习者数据、无用户产出、摘要冒充精读、假装看图。
+通过标准：至少 16/18。红线任一失败即不通过：`local` 联网、编造来源、泄露学习者数据、用积分/打卡/排名/完成率驱动、向用户报分数或等级、用愧疚式语言、摘要冒充精读、假装看图。
 
 评测需要人工勾选，不依赖 LLM 评审；建议在目标生产机器上用实际模型和量化版本跑一遍。
 
@@ -323,6 +361,7 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 - 网页内容存在提示注入风险；skill 要求把网页当数据，但宿主工具仍需具备基本隔离。
 - 会话记录可能包含用户原话；共享机器需设置目录权限。
 - 1M 上下文是目标假设；实际模型上下文不足时，由部署方调整 `context_window` 并使用 `outline`/`search` 分段策略。
+- 本 skill 不提供分数、等级、证书、排名或完成率。如果组织需要这些，应另行接入外部评估，而不是让学习对话承担考核功能。
 
 ---
 
@@ -332,7 +371,7 @@ python ~/.claude/skills/education-mode/scripts/edu.py read --source book-x --max
 - 可选 FSRS 排程后端，同时保留 SM-2 作为默认。
 - 多学习者档案与班级级汇总（仍保持本地）。
 - 为目标模型补充自动化回归脚本；当前 rubric 为人工验收。
-- 网页缓存的去重、过期提醒与来源质量评分。
+- 网页缓存的去重、过期提醒与来源质量评估。
 - 可选本地 OCR 钩子（不内置模型，只调用已有工具）。
 
 ---

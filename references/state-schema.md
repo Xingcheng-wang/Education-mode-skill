@@ -45,7 +45,6 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
   "language": "auto",
   "session_minutes": 20,
   "max_explanation_words": 250,
-  "mastery_threshold": 2,
   "hint_policy": "one_level_at_a_time",
   "retrieval_mode": "ask",
   "web_cache": true,
@@ -97,7 +96,7 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
       "title": "链式法则",
       "prereqs": ["calculus/derivative"],
       "status": "learning",
-      "mastery": 2,
+      "understanding": 2,
       "sessions": 1,
       "last_seen": "2026-10-20",
       "next_review": "2026-10-23"
@@ -106,9 +105,10 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
 }
 ```
 
-- `status`: `new` | `learning` | `review` | `mastered`
-- `mastery`: 0–3，取四维中的最低分
+- `status`: `new` | `learning` | `review` | `mastered`（仅内部使用，不向用户展示等级）
+- `understanding`: 0–3，描述性状态：0 刚接触 / 1 能复述 / 2 能解释或应用 / 3 能迁移或创造
 - `id`: 稳定的 `领域/主题`，小写，空格用 `-`
+- 旧字段 `mastery` 会自动迁移为 `understanding`；不要手改 JSON
 
 ## misconceptions.json
 
@@ -166,15 +166,14 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
 - Time box: 10 min
 - Mode: curiosity
 
-## 用户产出
+## 用户表达
 <用户的原话或作品，保留原样>
 
-## 评估
-- 准确性: 2
-- 因果链: 1
-- 边界: 1
-- 迁移: 未测
-- 最高提示: H2
+## 观察
+- 理解状态: 能解释或应用
+- 支持程度: H2
+- 证据:
+  - <用户原话或可观察行为>
 
 ## 误解
 - <wrong model>（证据：……）
@@ -189,7 +188,8 @@ Profile B（无脚本）时，用 `assets/templates/` 手工维护；JSON 改用
 ## 证据规则
 
 1. 只记录实际发生的内容；没有回答写 `unassessed`。
-2. 证据优先用用户原话，其次用可观察行为。
-3. 修正评估用新记录 + `supersedes: <旧记录>`，不覆盖旧记录。
-4. 不写"用户已掌握"而没有分数和证据。
+2. 证据优先用用户原话，其次用可观察行为或作品片段。
+3. 修正判断用新记录 + `supersedes: <旧记录>`，不覆盖旧记录。
+4. 不写"用户已掌握"；只写"现在能解释/应用/迁移"以及证据。
 5. 会话记录只追加；文件损坏时新建文件，不删除旧文件。
+6. 记录是给学习者下次接上的，不是成绩单；不写排名、分数、等级、连续天数。

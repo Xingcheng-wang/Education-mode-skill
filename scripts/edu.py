@@ -38,14 +38,13 @@ from datetime import date, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 
 DEFAULT_CONFIG = {
     "version": 2,
     "language": "auto",
     "session_minutes": 20,
     "max_explanation_words": 250,
-    "mastery_threshold": 2,
     "hint_policy": "one_level_at_a_time",
     "retrieval_mode": "ask",
     "web_cache": True,
@@ -56,6 +55,20 @@ DEFAULT_CONFIG = {
 }
 
 ALLOWED_RETRIEVAL = ("local", "web", "ask", "auto")
+
+UNDERSTANDING_LABELS = {
+    0: "刚接触",
+    1: "能复述",
+    2: "能解释或应用",
+    3: "能迁移或创造",
+}
+
+STATUS_LABELS = {
+    "new": "刚接触",
+    "learning": "探索中",
+    "review": "巩固中",
+    "mastered": "能应用",
+}
 
 PROFILE_TEMPLATE = """# Learner Profile
 
@@ -154,6 +167,9 @@ def normalize_config(cfg: dict):
     if "allow_network" in cfg:
         cfg.pop("allow_network", None)
         changed = True
+    if "mastery_threshold" in cfg:
+        cfg.pop("mastery_threshold", None)
+        changed = True
 
     for key, value in DEFAULT_CONFIG.items():
         if key not in cfg:
@@ -198,7 +214,24 @@ def ensure_home(home: Path, lang: str = "auto") -> Path:
 
 
 def load_items(home: Path, name: str) -> dict:
-    return load_json(home / "learner" / name, {"version": 1, "items": []})
+    data = load_json(home / "learner" / name, {"version": 1, "items": []})
+    if name == "topics.json":
+        changed = False
+        for item in data.get("items", []):
+            if "understanding" not in item and "mastery" in item:
+                item["understanding"] = item.pop("mastery")
+                changed = True
+            if "understanding" in item:
+                try:
+                    level = max(0, min(3, int(item["understanding"])))
+                except (TypeError, ValueError):
+                    level = 0
+                if item["understanding"] != level:
+                    item["understanding"] = level
+                    changed = True
+        if changed:
+            save_json(home / "learner" / name, data)
+    return data
 
 
 def save_items(home: Path, name: str, data: dict) -> None:
@@ -578,7 +611,7 @@ def cmd_status(args) -> int:
     print("retrieval: %s  (context %s, multimodal %s)" % (
         config.get("retrieval_mode"), config.get("context_window"), config.get("multimodal"),
     ))
-    print("topics   : %d  (mastered %d, learning %d)" % (
+    print("topics   : %d  (能应用 %d, 探索中 %d)" % (
         len(topics),
         sum(1 for t in topics if t.get("status") == "mastered"),
         sum(1 for t in topics if t.get("status") == "learning"),
@@ -589,10 +622,11 @@ def cmd_status(args) -> int:
     if topics:
         print("\nTop topics:")
         for topic in topics[:8]:
-            print("  %-28s %-8s %s/3  next=%s" % (
+            level = int(topic.get("understanding", topic.get("mastery", 0)) or 0)
+            print("  %-28s %-10s %-16s next=%s" % (
                 topic.get("id", "?"),
-                topic.get("status", "?"),
-                topic.get("mastery", 0),
+                STATUS_LABELS.get(topic.get("status", ""), topic.get("status", "?")),
+                UNDERSTANDING_LABELS.get(level, str(level)),
                 topic.get("next_review") or "-",
             ))
     if due:
@@ -611,7 +645,7 @@ def cmd_status(args) -> int:
 
 
 CONFIG_BOOL_KEYS = {"web_cache", "multimodal"}
-CONFIG_INT_KEYS = {"session_minutes", "max_explanation_words", "mastery_threshold", "context_window"}
+CONFIG_INT_KEYS = {"session_minutes", "max_explanation_words", "context_window"}
 
 
 def cmd_config(args) -> int:
@@ -648,8 +682,6 @@ def cmd_config(args) -> int:
         raise SystemExit("context_window must be >= 8000")
     if config["max_explanation_words"] < 50:
         raise SystemExit("max_explanation_words must be >= 50")
-    if config["mastery_threshold"] not in (0, 1, 2, 3):
-        raise SystemExit("mastery_threshold must be 0-3")
     if config["session_minutes"] < 5:
         raise SystemExit("session_minutes must be >= 5")
     if config["language"] not in ("auto", "zh", "en"):
@@ -983,7 +1015,7 @@ def cmd_checkpoint(args) -> int:
             "title": args.topic_title or topic_id,
             "prereqs": [],
             "status": "learning",
-            "mastery": 0,
+            "understanding": 0,
             "sessions": 0,
             "last_seen": today_str(),
             "next_review": None,
@@ -994,8 +1026,9 @@ def cmd_checkpoint(args) -> int:
     topic["last_seen"] = today_str()
     if args.topic_title:
         topic["title"] = args.topic_title
-    if args.mastery is not None:
-        topic["mastery"] = max(0, min(3, args.mastery))
+    level = args.understanding if args.understanding is not None else args.mastery
+    if level is not None:
+        topic["understanding"] = max(0, min(3, level))
     if args.status:
         topic["status"] = args.status
     if args.next_review:
@@ -1018,17 +1051,16 @@ def cmd_checkpoint(args) -> int:
         "- Mode: %s" % args.mode,
         "- Retrieval: %s" % (args.retrieval or "-"),
         "",
-        "## 用户产出",
+        "## 用户表达",
         "",
         args.summary or "<未记录>",
         "",
-        "## 评估",
+        "## 观察",
         "",
-        "- 准确性: %s" % ("-" if args.accuracy is None else args.accuracy),
-        "- 因果链: %s" % ("-" if args.causal is None else args.causal),
-        "- 边界: %s" % ("-" if args.boundary is None else args.boundary),
-        "- 迁移: %s" % ("未测" if args.transfer is None else args.transfer),
-        "- 最高提示: %s" % (args.highest_hint or "-"),
+        "- 理解状态: %s" % (
+            UNDERSTANDING_LABELS.get(level, "未记录") if level is not None else "未记录"
+        ),
+        "- 支持程度: %s" % (args.highest_hint or "-"),
         "",
         "## 证据",
         "",
@@ -1070,7 +1102,7 @@ def cmd_validate(args) -> int:
 
     seen_topics = set()
     for topic in load_items(home, "topics.json")["items"]:
-        missing = [key for key in ("id", "status", "mastery") if key not in topic]
+        missing = [key for key in ("id", "status", "understanding") if key not in topic]
         if missing:
             errors.append("topic missing fields %s: %r" % (missing, topic))
         if topic.get("id") in seen_topics:
@@ -1078,8 +1110,8 @@ def cmd_validate(args) -> int:
         seen_topics.add(topic.get("id"))
         if topic.get("status") not in ("new", "learning", "review", "mastered"):
             warnings.append("unknown topic status: %r" % topic.get("status"))
-        if not isinstance(topic.get("mastery"), int) or not 0 <= topic.get("mastery", 0) <= 3:
-            errors.append("topic mastery out of range: %r" % topic)
+        if not isinstance(topic.get("understanding"), int) or not 0 <= topic.get("understanding", 0) <= 3:
+            errors.append("topic understanding out of range: %r" % topic)
 
     seen_mis = set()
     for item in load_items(home, "misconceptions.json")["items"]:
@@ -1246,19 +1278,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--retrieval", default=None, choices=ALLOWED_RETRIEVAL)
     p.add_argument("--goal", default=None)
     p.add_argument("--time", default=None)
-    p.add_argument("--summary", default=None, help="what the learner produced")
+    p.add_argument("--summary", default=None, help="what the learner said or did")
     p.add_argument("--evidence", action="append", default=[])
     p.add_argument("--misconception", action="append", default=[],
                    help='format: "wrong | evidence | correction"')
     p.add_argument("--next", default=None)
-    p.add_argument("--mastery", type=int, default=None)
+    p.add_argument("--understanding", type=int, default=None, choices=(0, 1, 2, 3))
+    p.add_argument("--mastery", type=int, default=None, help=argparse.SUPPRESS)
     p.add_argument("--status", default=None,
-                   choices=("new", "learning", "review", "mastered"))
+                   choices=("new", "learning", "review", "mastered"),
+                   help=argparse.SUPPRESS)
     p.add_argument("--next-review", default=None)
-    p.add_argument("--accuracy", type=int, default=None)
-    p.add_argument("--causal", type=int, default=None)
-    p.add_argument("--boundary", type=int, default=None)
-    p.add_argument("--transfer", type=int, default=None)
     p.add_argument("--highest-hint", default=None)
     p.set_defaults(func=cmd_checkpoint)
 
