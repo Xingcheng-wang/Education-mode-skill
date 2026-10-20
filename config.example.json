@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "language": "auto",
+  "session_minutes": 20,
+  "max_explanation_words": 180,
+  "mastery_threshold": 2,
+  "hint_policy": "one_level_at_a_time",
+  "allow_network": false,
+  "corpus_dir": "corpus",
+  "review_algorithm": "sm2"
+}

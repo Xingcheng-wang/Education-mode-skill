@@ -1,0 +1,11 @@
+[EDU STATE]
+learner: <称呼>
+language: zh | en | auto
+topic: <topic-id> | mastery: 0-3 | mode: curiosity|systematic|skill-drill|deep-read
+goal: <本次目标>
+produced: <用户本次产出了什么>
+misconception: <用户以为... / 实际... / 证据...>
+highest_hint: H0-H5
+next: <下一步动作>
+review: <YYYY-MM-DD> | question: <复习问题>
+[/EDU STATE]
