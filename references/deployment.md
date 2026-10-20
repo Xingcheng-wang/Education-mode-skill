@@ -77,9 +77,14 @@ python <SKILL_DIR>/scripts/edu.py config --home <EDU_HOME> --set retrieval_mode=
 3. 如果有离线 OCR 结果，读 OCR 文本并标注；
 4. 不要根据上下文猜测图中内容，也不要把图注当成完整信息。
 
-## 4. 隐私
+## 4. 隐私、记录与退出
 
 - 学习记录、画像、误解库、会话内容全部留在本机 `<EDU_HOME>`。
+- 默认记录级别是 `outline`：只保存用户确认的概要，不保存原话、不写"证据"、不写理解等级。
+- 原话只在用户明确选择 `verbatim` 时保存；`off` 时不写任何会话、主题或误解。
+- 学习者可以随时退出；退出即停止模式，不总结、不记录、不追问。
+- 学习者可以 `records` 查看、`session` 查看单条、`export` 导出、`forget` 删除或遗忘；删除前自动备份。
+- `retrieval_mode` 是用户专属设置；模型不得自行修改，只能提示用户手动执行。
 - `web` 模式下，搜索查询只包含主题关键词；不得包含姓名、画像、会话摘要、代码、文件路径或其他个人数据。
 - 网页缓存保存在 `corpus/<id>/`，不自动上传。
 - 共享机器应限制 `~/.edu` 的目录权限。
@@ -93,9 +98,11 @@ python <SKILL_DIR>/scripts/edu.py validate --home <EDU_HOME>
 
 确认：
 
-- `retrieval_mode` 与部署环境一致；
+- `retrieval_mode` 与部署环境一致；只能由用户修改；
 - `context_window` 与实际模型一致（默认 1000000）；
 - `multimodal` 为 false；
+- 默认记录同意级别为 `outline`；`verbatim` 只在用户明确选择时使用；
+- `records` / `export` / `forget` 可用；`forget` 默认 dry-run，删除前备份；
 - 本地 corpus 可读写；
 - PDF 解析工具可用，或已有 txt/md 版本；
 - 学习工作区不在共享只读目录。

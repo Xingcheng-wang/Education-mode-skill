@@ -15,10 +15,14 @@ Commands:
   source      show corpus metadata (including web URL / access date)
   read        print a full source or a character range (large-context models)
   outline     print chunk locators and opening lines (structure map)
-  add-review  add a spaced-repetition item
-  due         list due review items
-  review      record a review grade and reschedule (SM-2)
-  checkpoint  append a session record and update learner state
+  add-review  save an optional reconnection item
+  reviews     list optional reconnections (learner-initiated)
+  revisit     choose when to revisit, or pause
+  checkpoint  append a session record with consent (off/outline/verbatim)
+  records     list stored session metadata
+  session     show one stored session
+  export      export learning data to a zip
+  forget      delete selected learning data (dry-run by default)
   validate    check workspace integrity
 """
 
@@ -34,17 +38,15 @@ import subprocess
 import sys
 import zipfile
 from collections import Counter
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 DEFAULT_CONFIG = {
     "version": 2,
     "language": "auto",
-    "session_minutes": 20,
-    "max_explanation_words": 250,
     "hint_policy": "one_level_at_a_time",
     "retrieval_mode": "ask",
     "web_cache": True,
@@ -53,6 +55,8 @@ DEFAULT_CONFIG = {
     "corpus_dir": "corpus",
     "review_algorithm": "sm2",
 }
+
+CONSENT_LEVELS = ("off", "outline", "verbatim")
 
 ALLOWED_RETRIEVAL = ("local", "web", "ask", "auto")
 
@@ -74,11 +78,13 @@ PROFILE_TEMPLATE = """# Learner Profile
 
 - 姓名/称呼：
 - 语言偏好：auto
-- 每次可用时间：20 分钟
-- 目标（学成后要做什么）：
+- 一般想聊多久（可选）：
+- 我现在想弄懂的问题：
+- 目标（学成后想做出什么，可选）：
 - 已有基础：
 - 偏好（例子/图/公式/代码/先练后讲）：
 - 不喜欢的教学方式：
+- 记录偏好：off / outline / verbatim
 - 备注：
 
 ## 当前重点
@@ -560,6 +566,7 @@ def cmd_doctor(args) -> int:
         print("web_cache   : %s" % cfg.get("web_cache"))
         print("context     : %s tokens" % cfg.get("context_window"))
         print("multimodal  : %s" % cfg.get("multimodal"))
+        print("consent     : outline (default)")
         if cfg.get("retrieval_mode") == "local":
             print("network     : disabled by retrieval_mode=local")
         if cfg.get("multimodal"):
@@ -587,10 +594,6 @@ def cmd_status(args) -> int:
     config, _ = normalize_config(load_json(home / "config.json", DEFAULT_CONFIG))
     topics = load_items(home, "topics.json")["items"]
     misconceptions = load_items(home, "misconceptions.json")["items"]
-    schedule = load_items(home, "schedule.json")["items"]
-    current = today()
-
-    due = [item for item in schedule if item.get("due", "9999-12-31") <= current.isoformat()]
     open_mis = [item for item in misconceptions if item.get("status") == "open"]
     sessions = sorted((home / "sessions").glob("*.md"))
     corpus = [p for p in (home / "corpus").iterdir() if p.is_dir() and p.name != "inbox"]
@@ -600,7 +603,6 @@ def cmd_status(args) -> int:
             "home": str(home),
             "config": config,
             "topics": topics,
-            "due": due,
             "open_misconceptions": open_mis,
             "recent_sessions": [p.name for p in sessions[-5:]],
             "corpus_sources": [p.name for p in corpus],
@@ -616,7 +618,7 @@ def cmd_status(args) -> int:
         sum(1 for t in topics if t.get("status") == "mastered"),
         sum(1 for t in topics if t.get("status") == "learning"),
     ))
-    print("reviews  : %d total, %d due today" % (len(schedule), len(due)))
+    print("reviews  : available on request (try `reviews`)")
     print("open misconceptions: %d" % len(open_mis))
     print("corpus   : %d sources" % len(corpus))
     if topics:
@@ -628,14 +630,6 @@ def cmd_status(args) -> int:
                 STATUS_LABELS.get(topic.get("status", ""), topic.get("status", "?")),
                 UNDERSTANDING_LABELS.get(level, str(level)),
                 topic.get("next_review") or "-",
-            ))
-    if due:
-        print("\nDue now:")
-        for item in due[:8]:
-            print("  %-6s %-28s %s" % (
-                item.get("id", "?"),
-                item.get("topic_id", "?"),
-                item.get("question", "")[:60],
             ))
     if sessions:
         print("\nRecent sessions:")
@@ -678,11 +672,11 @@ def cmd_config(args) -> int:
         else:
             raise SystemExit("Unknown config key: %s" % key)
 
-    if config["context_window"] < 8000:
+    if config.get("context_window", 1000000) < 8000:
         raise SystemExit("context_window must be >= 8000")
-    if config["max_explanation_words"] < 50:
+    if "max_explanation_words" in config and config["max_explanation_words"] < 50:
         raise SystemExit("max_explanation_words must be >= 50")
-    if config["session_minutes"] < 5:
+    if "session_minutes" in config and config["session_minutes"] < 5:
         raise SystemExit("session_minutes must be >= 5")
     if config["language"] not in ("auto", "zh", "en"):
         raise SystemExit("language must be auto, zh or en")
@@ -913,48 +907,80 @@ def cmd_add_review(args) -> int:
         "reps": 0,
         "lapses": 0,
         "due": due,
+        "active": True,
         "last_grade": None,
         "created": today_str(),
     }
     items.append(item)
     save_items(home, "schedule.json", schedule)
-    print("added %s due %s: %s" % (item["id"], item["due"], item["question"]))
+    print("added optional reconnection %s (suggested: %s): %s" % (
+        item["id"], item["due"], item["question"],
+    ))
     return 0
 
 
-def cmd_due(args) -> int:
+def cmd_reviews(args) -> int:
     home = ensure_home(workspace(args))
-    target = parse_date(args.date) if args.date else today()
-    schedule = load_items(home, "schedule.json")["items"]
-    due = [item for item in schedule if item.get("due", "9999-12-31") <= target.isoformat()]
-    due.sort(key=lambda item: (item.get("due", ""), item.get("id", "")))
+    items = load_items(home, "schedule.json")["items"]
+    active = [item for item in items if item.get("active", True) is not False]
+    topic_id = getattr(args, "topic_id", None)
+    if topic_id:
+        active = [item for item in active if item.get("topic_id") == topic_id]
+    active.sort(key=lambda item: (item.get("due") or "9999-12-31", item.get("id", "")))
 
     if args.json:
-        print_json(due)
+        print_json(active)
         return 0
-    if not due:
-        print("No reviews due on %s." % target.isoformat())
+    if not active:
+        print("No optional reconnections saved. You can add one when you want.")
         return 0
-    for item in due:
-        print("%-6s %-10s %-28s %s" % (
-            item.get("id"), item.get("due"), item.get("topic_id"),
+    for item in active:
+        print("%-6s suggested %-12s %-28s %s" % (
+            item.get("id"),
+            item.get("due") or "not set",
+            item.get("topic_id", "?"),
             item.get("question", "")[:70],
         ))
     return 0
 
 
-def cmd_review(args) -> int:
+def _parse_next(value: str, on_date: date):
+    value = value.strip().lower()
+    if value in ("off", "none", "pause"):
+        return None
+    match = re.fullmatch(r"(\d+)d", value)
+    if match:
+        return (on_date + timedelta(days=int(match.group(1)))).isoformat()
+    return parse_date(value).isoformat()
+
+
+def cmd_revisit(args) -> int:
     home = ensure_home(workspace(args))
     schedule = load_items(home, "schedule.json")
     item = next((entry for entry in schedule["items"] if entry.get("id") == args.item_id), None)
     if item is None:
-        raise SystemExit("Review item not found: %s" % args.item_id)
+        raise SystemExit("Reconnection item not found: %s" % args.item_id)
     on_date = parse_date(args.date) if args.date else today()
-    sm2_update(item, args.grade, on_date)
+
+    if args.next:
+        next_date = _parse_next(args.next, on_date)
+        if next_date is None:
+            item["active"] = False
+            item["due"] = None
+            message = "paused; no reminder will be shown"
+        else:
+            item["active"] = True
+            item["due"] = next_date
+            message = "next suggestion: %s" % next_date
+    elif args.grade is not None:
+        sm2_update(item, args.grade, on_date)
+        item["active"] = True
+        message = "next suggestion: %s" % item.get("due")
+    else:
+        raise SystemExit("Provide --next 3d|7d|off|YYYY-MM-DD")
+
     save_items(home, "schedule.json", schedule)
-    print("%s graded %d -> interval %d, due %s" % (
-        item["id"], args.grade, item["interval"], item["due"],
-    ))
+    print("%s: %s" % (item["id"], message))
     return 0
 
 
@@ -967,7 +993,7 @@ def _next_session_number(home: Path) -> int:
     return highest + 1
 
 
-def _append_misconceptions(home: Path, topic_id: str, raw_entries):
+def _append_misconceptions(home: Path, topic_id: str, raw_entries, consent="outline"):
     if not raw_entries:
         return []
     store = load_items(home, "misconceptions.json")
@@ -984,6 +1010,8 @@ def _append_misconceptions(home: Path, topic_id: str, raw_entries):
         wrong = parts[0] if parts else raw.strip()
         evidence = parts[1] if len(parts) > 1 else ""
         correction = parts[2] if len(parts) > 2 else ""
+        if consent != "verbatim":
+            evidence = ""
         entry = {
             "id": "M%04d" % next_id,
             "topic_id": topic_id,
@@ -1006,6 +1034,13 @@ def cmd_checkpoint(args) -> int:
     topic_id = args.topic_id.strip()
     if not topic_id:
         raise SystemExit("--topic-id is required")
+
+    consent = args.consent
+    if consent == "off":
+        print("not recorded (consent=off); no session, topic, or misconception was written")
+        return 0
+    if args.evidence and consent != "verbatim":
+        eprint("note: --evidence is ignored unless --consent verbatim")
 
     topics = load_items(home, "topics.json")
     topic = next((entry for entry in topics["items"] if entry.get("id") == topic_id), None)
@@ -1036,7 +1071,7 @@ def cmd_checkpoint(args) -> int:
         topic["next_review"] = args.next_review
     save_items(home, "topics.json", topics)
 
-    created = _append_misconceptions(home, topic_id, args.misconception)
+    created = _append_misconceptions(home, topic_id, args.misconception, consent=consent)
 
     number = _next_session_number(home)
     filename = "%04d-%s-%s.md" % (number, today_str(), slugify(topic_id.replace("/", "-")))
@@ -1046,44 +1081,241 @@ def cmd_checkpoint(args) -> int:
         "# Session %04d — %s — %s" % (number, today_str(), args.mode),
         "",
         "- Topic: %s" % topic_id,
-        "- Goal: %s" % (args.goal or "-"),
-        "- Time box: %s" % (args.time or "-"),
         "- Mode: %s" % args.mode,
         "- Retrieval: %s" % (args.retrieval or "-"),
-        "",
-        "## 用户表达",
-        "",
-        args.summary or "<未记录>",
-        "",
-        "## 观察",
-        "",
-        "- 理解状态: %s" % (
-            UNDERSTANDING_LABELS.get(level, "未记录") if level is not None else "未记录"
-        ),
-        "- 支持程度: %s" % (args.highest_hint or "-"),
-        "",
-        "## 证据",
-        "",
+        "- 记录同意: %s" % consent,
     ]
-    if args.evidence:
-        lines.extend("- %s" % entry for entry in args.evidence)
+    if args.goal:
+        lines.append("- Goal: %s" % args.goal)
+    lines.append("")
+
+    if consent == "verbatim":
+        lines.extend([
+            "## 用户表达",
+            "",
+            args.summary or "<未记录>",
+            "",
+            "## 观察",
+            "",
+            "- 理解状态: %s" % (
+                UNDERSTANDING_LABELS.get(level, "未记录") if level is not None else "未记录"
+            ),
+            "- 支持程度: %s" % (args.highest_hint or "-"),
+            "",
+            "## 用户原话（已同意）",
+            "",
+        ])
+        if args.evidence:
+            lines.extend("- %s" % entry for entry in args.evidence)
+        else:
+            lines.append("- <未记录>")
     else:
-        lines.append("- <未记录>")
+        lines.extend([
+            "## 本轮概要（只记大纲，不含原话）",
+            "",
+            args.summary or "<未记录>",
+        ])
+
     lines.extend(["", "## 误解", ""])
     if created:
         for entry in created:
-            lines.append("- %s：%s（证据：%s；纠正：%s）" % (
-                entry["id"], entry["wrong_model"],
-                entry["evidence"] or "-", entry["correction"] or "-",
-            ))
+            if consent == "verbatim":
+                lines.append("- %s：%s（证据：%s；纠正：%s）" % (
+                    entry["id"], entry["wrong_model"],
+                    entry["evidence"] or "-", entry["correction"] or "-",
+                ))
+            else:
+                lines.append("- %s：%s（纠正：%s；原话未保存）" % (
+                    entry["id"], entry["wrong_model"], entry["correction"] or "-",
+                ))
     else:
         lines.append("- none")
+
     lines.extend(["", "## 下一步", "", "- %s" % (args.next or "<未记录>"), ""])
+    if args.next_review:
+        lines.extend(["## 可选复习", "", "- suggested: %s" % args.next_review, ""])
     path.write_text("\n".join(lines), encoding="utf-8", newline="\n")
 
-    print("session written: %s" % path)
+    print("session written: %s (consent=%s)" % (path, consent))
     if created:
         print("misconceptions: %s" % ", ".join(entry["id"] for entry in created))
+    return 0
+
+
+def _session_meta(path: Path) -> dict:
+    text = path.read_text(encoding="utf-8")
+    meta = {
+        "file": path.name,
+        "date": "",
+        "topic": "",
+        "mode": "",
+        "consent": "legacy",
+        "has_verbatim": ("## 用户原话" in text) or ("## 证据" in text),
+    }
+    match = re.match(r"(\d{4})-(\d{4}-\d{2}-\d{2})-", path.name)
+    if match:
+        meta["date"] = match.group(2)
+    for line in text.splitlines():
+        if line.startswith("- Topic:"):
+            meta["topic"] = line.split(":", 1)[1].strip()
+        elif line.startswith("- Mode:"):
+            meta["mode"] = line.split(":", 1)[1].strip()
+        elif line.startswith("- 记录同意:"):
+            meta["consent"] = line.split(":", 1)[1].strip()
+    return meta
+
+
+def cmd_records(args) -> int:
+    home = ensure_home(workspace(args))
+    rows = [_session_meta(path) for path in sorted((home / "sessions").glob("*.md"))]
+    if args.json:
+        print_json(rows)
+        return 0
+    if not rows:
+        print("No session records.")
+        return 0
+    print("%-42s %-10s %-12s %-8s %-9s %s" % (
+        "FILE", "DATE", "MODE", "CONSENT", "QUOTES", "TOPIC",
+    ))
+    for row in rows:
+        print("%-42s %-10s %-12s %-8s %-9s %s" % (
+            row["file"], row["date"], row["mode"], row["consent"],
+            "yes" if row["has_verbatim"] else "no", row["topic"],
+        ))
+    return 0
+
+
+def cmd_session(args) -> int:
+    home = ensure_home(workspace(args))
+    matches = [
+        path for path in sorted((home / "sessions").glob("*.md"))
+        if args.id in path.name
+    ]
+    if not matches:
+        raise SystemExit("Session not found: %s" % args.id)
+    if len(matches) > 1:
+        raise SystemExit("Multiple sessions match %r: %s" % (
+            args.id, ", ".join(path.name for path in matches),
+        ))
+    path = matches[0]
+    meta = _session_meta(path)
+    if meta["consent"] == "outline" and not meta["has_verbatim"]:
+        eprint("note: outline record; no verbatim quotes are stored")
+    print(path.read_text(encoding="utf-8"))
+    return 0
+
+
+def cmd_export(args) -> int:
+    home = ensure_home(workspace(args))
+    target = Path(args.to).expanduser()
+    if target.suffix.lower() == ".zip":
+        archive = target
+        archive.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        target.mkdir(parents=True, exist_ok=True)
+        archive = target / ("edu-export-%s.zip" % today_str())
+
+    entries = ["config.json", "learner", "sessions", "notes"]
+    if args.include_corpus:
+        entries.append("corpus")
+    with zipfile.ZipFile(str(archive), "w", zipfile.ZIP_DEFLATED) as zf:
+        for rel in entries:
+            source = home / rel
+            if source.is_file():
+                zf.write(str(source), rel)
+            elif source.is_dir():
+                for path in sorted(source.rglob("*")):
+                    if path.is_file():
+                        zf.write(str(path), str(path.relative_to(home)))
+    print("exported: %s" % archive)
+    return 0
+
+
+def _backup_workspace(home: Path) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    dest = home / "backup" / stamp
+    dest.mkdir(parents=True, exist_ok=True)
+    for rel in ("learner", "sessions", "notes"):
+        source = home / rel
+        if source.exists():
+            shutil.copytree(str(source), str(dest / rel), dirs_exist_ok=True)
+    return dest
+
+
+def cmd_forget(args) -> int:
+    home = ensure_home(workspace(args))
+    targets = [name for name in ("session", "topic", "all") if getattr(args, name)]
+    if len(targets) != 1:
+        raise SystemExit("Choose exactly one of --session, --topic, or --all")
+
+    sessions = sorted((home / "sessions").glob("*.md"))
+    actions = []
+
+    if args.session:
+        matches = [path for path in sessions if args.session in path.name]
+        if not matches:
+            raise SystemExit("Session not found: %s" % args.session)
+        actions.extend("delete session %s" % path.name for path in matches)
+
+    if args.topic:
+        topics = load_items(home, "topics.json")
+        topic = next((item for item in topics["items"] if item.get("id") == args.topic), None)
+        if topic is None:
+            raise SystemExit("Topic not found: %s" % args.topic)
+        related_sessions = [
+            path for path in sessions
+            if _session_meta(path)["topic"] == args.topic
+        ]
+        actions.append("remove topic %s" % args.topic)
+        actions.append("remove related reviews and misconceptions")
+        actions.extend("delete session %s" % path.name for path in related_sessions)
+
+    if args.all:
+        actions.append("remove all learner profile, topics, misconceptions, and reviews")
+        actions.extend("delete session %s" % path.name for path in sessions)
+        for path in sorted((home / "notes").glob("*.md")):
+            actions.append("delete note %s" % path.name)
+
+    if not actions:
+        print("Nothing to forget.")
+        return 0
+
+    for action in actions:
+        print(action)
+    if not args.apply:
+        print("dry-run only; run again with --apply to delete (a backup will be made)")
+        return 0
+
+    backup = _backup_workspace(home)
+    print("backup: %s" % backup)
+
+    if args.session:
+        for path in sessions:
+            if args.session in path.name:
+                path.unlink()
+    elif args.topic:
+        topics = load_items(home, "topics.json")
+        topics["items"] = [item for item in topics["items"] if item.get("id") != args.topic]
+        save_items(home, "topics.json", topics)
+        for name, key in (("misconceptions.json", "topic_id"), ("schedule.json", "topic_id")):
+            store = load_items(home, name)
+            store["items"] = [item for item in store["items"] if item.get(key) != args.topic]
+            save_items(home, name, store)
+        for path in sessions:
+            if _session_meta(path)["topic"] == args.topic:
+                path.unlink()
+    else:
+        for path in sessions:
+            path.unlink()
+        for path in sorted((home / "notes").glob("*.md")):
+            path.unlink()
+        profile = home / "learner" / "profile.md"
+        if profile.exists():
+            profile.unlink()
+        for name in ("topics.json", "misconceptions.json", "schedule.json"):
+            save_items(home, name, {"version": 1, "items": []})
+
+    print("done.")
     return 0
 
 
@@ -1124,13 +1356,14 @@ def cmd_validate(args) -> int:
         if item.get("id") in seen_reviews:
             errors.append("duplicate review id: %s" % item.get("id"))
         seen_reviews.add(item.get("id"))
-        if "due" not in item:
-            errors.append("review missing due: %s" % item.get("id"))
-        else:
-            try:
-                parse_date(item["due"])
-            except SystemExit:
-                errors.append("bad due date on %s: %r" % (item.get("id"), item.get("due")))
+        if item.get("active", True) is not False:
+            if not item.get("due"):
+                errors.append("active review missing due: %s" % item.get("id"))
+            else:
+                try:
+                    parse_date(item["due"])
+                except SystemExit:
+                    errors.append("bad due date on %s: %r" % (item.get("id"), item.get("due")))
 
     seen_sessions = set()
     for path in sorted((home / "sessions").glob("*.md")):
@@ -1248,26 +1481,41 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_search)
 
-    p = sub.add_parser("add-review", help="add a spaced-repetition item")
+    p = sub.add_parser("add-review", help="save an optional reconnection")
     add_home(p)
     p.add_argument("--topic-id", required=True)
     p.add_argument("--question", required=True)
     p.add_argument("--answer", required=True)
-    p.add_argument("--due", default=None)
+    p.add_argument("--due", default=None, help="optional suggested date")
     p.set_defaults(func=cmd_add_review)
 
-    p = sub.add_parser("due", help="list due reviews")
+    p = sub.add_parser("reviews", help="list optional reconnections")
     add_home(p)
-    p.add_argument("--date", default=None)
+    p.add_argument("--topic-id", default=None)
     p.add_argument("--json", action="store_true")
-    p.set_defaults(func=cmd_due)
+    p.set_defaults(func=cmd_reviews)
 
-    p = sub.add_parser("review", help="grade a review item (SM-2)")
+    p = sub.add_parser("due", help=argparse.SUPPRESS)
+    add_home(p)
+    p.add_argument("--topic-id", default=None)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_reviews)
+
+    p = sub.add_parser("revisit", help="choose when to revisit, or pause")
     add_home(p)
     p.add_argument("--item-id", required=True)
-    p.add_argument("--grade", type=int, required=True)
-    p.add_argument("--date", default=None)
-    p.set_defaults(func=cmd_review)
+    p.add_argument("--next", default=None, help="3d, 7d, off, or YYYY-MM-DD")
+    p.add_argument("--grade", type=int, default=None, help=argparse.SUPPRESS)
+    p.add_argument("--date", default=None, help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_revisit)
+
+    p = sub.add_parser("review", help=argparse.SUPPRESS)
+    add_home(p)
+    p.add_argument("--item-id", required=True)
+    p.add_argument("--next", default=None, help=argparse.SUPPRESS)
+    p.add_argument("--grade", type=int, default=None, help=argparse.SUPPRESS)
+    p.add_argument("--date", default=None, help=argparse.SUPPRESS)
+    p.set_defaults(func=cmd_revisit)
 
     p = sub.add_parser("checkpoint", help="append a session record")
     add_home(p)
@@ -1276,10 +1524,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--mode", required=True,
                    choices=("curiosity", "systematic", "skill-drill", "deep-read"))
     p.add_argument("--retrieval", default=None, choices=ALLOWED_RETRIEVAL)
+    p.add_argument("--consent", default="outline", choices=CONSENT_LEVELS,
+                   help="off = write nothing; outline = learner-confirmed summary; verbatim = quotes with consent")
     p.add_argument("--goal", default=None)
-    p.add_argument("--time", default=None)
-    p.add_argument("--summary", default=None, help="what the learner said or did")
-    p.add_argument("--evidence", action="append", default=[])
+    p.add_argument("--time", default=None, help=argparse.SUPPRESS)
+    p.add_argument("--summary", default=None, help="learner-confirmed summary")
+    p.add_argument("--evidence", action="append", default=[],
+                   help="only stored with --consent verbatim")
     p.add_argument("--misconception", action="append", default=[],
                    help='format: "wrong | evidence | correction"')
     p.add_argument("--next", default=None)
@@ -1291,6 +1542,32 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--next-review", default=None)
     p.add_argument("--highest-hint", default=None)
     p.set_defaults(func=cmd_checkpoint)
+
+    p = sub.add_parser("records", help="list stored session metadata")
+    add_home(p)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_records)
+
+    p = sub.add_parser("session", help="show one stored session")
+    add_home(p)
+    p.add_argument("--id", required=True)
+    p.set_defaults(func=cmd_session)
+
+    p = sub.add_parser("export", help="export learning data")
+    add_home(p)
+    p.add_argument("--to", required=True, help="destination zip or directory")
+    p.add_argument("--include-corpus", action="store_true")
+    p.set_defaults(func=cmd_export)
+
+    p = sub.add_parser("forget", help="delete selected learning data")
+    add_home(p)
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument("--session", default=None)
+    group.add_argument("--topic", default=None)
+    group.add_argument("--all", action="store_true")
+    p.add_argument("--apply", action="store_true",
+                   help="actually delete; without it the command only previews")
+    p.set_defaults(func=cmd_forget)
 
     p = sub.add_parser("validate", help="check workspace integrity")
     add_home(p)

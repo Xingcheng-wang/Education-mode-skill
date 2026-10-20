@@ -1,11 +1,10 @@
 [EDU STATE]
 learner: <称呼>
 language: zh | en | auto
-topic: <topic-id> | understanding: 刚接触|能复述|能解释或应用|能迁移或创造 | mode: curiosity|systematic|skill-drill|deep-read | retrieval: local|web|ask
-goal: <本次目标>
-said: <用户本次说了/做了什么，不写分数>
-misconception: <用户以为... / 实际... / 证据...>
-highest_hint: H0-H5
-next: <下一步动作>
-review: <YYYY-MM-DD> | question: <复习问题>
+topic: <topic-id> | mode: curiosity|systematic|skill-drill|deep-read | retrieval: local|web|ask
+consent: off | outline | verbatim
+said: <用户本次说了/做了什么，不写分数；默认只记概要>
+misconception: <用户以为... → 实际...；默认不写原话>
+next: <下一步动作，可选>
+review: <YYYY-MM-DD> | question: <可选重访问题>
 [/EDU STATE]
